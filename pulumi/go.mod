@@ -1,4 +1,4 @@
-module infra
+module kend-infra
 
 go 1.21
 

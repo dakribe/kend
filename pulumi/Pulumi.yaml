@@ -1,3 +1,7 @@
-name: infra
+name: kend-infra
 runtime: go
 description: Kend infrastructure
+config:
+  pulumi:tags:
+    value:
+      pulumi:template: ""
