@@ -29,13 +29,28 @@ func main() {
 			Handler: pulumi.String("handler"),
 			Role:    role.Arn,
 			Runtime: pulumi.String("provided.al2"),
-			Code:    pulumi.NewFileArchive("../handler.zip"),
+			Code:    pulumi.NewFileArchive("../timeHandler.zip"),
+		}
+
+		testArgs := &lambda.FunctionArgs{
+			Handler: pulumi.String("handler"),
+			Role:    role.Arn,
+			Runtime: pulumi.String("provided.al2"),
+			Code:    pulumi.NewFileArchive("../testHandler.zip"),
 		}
 
 		timeFunction, err := lambda.NewFunction(
 			ctx,
 			"timeFunction",
 			args)
+		if err != nil {
+			return err
+		}
+
+		testFunction, err := lambda.NewFunction(
+			ctx,
+			"testFunction",
+			testArgs)
 		if err != nil {
 			return err
 		}
@@ -69,9 +84,33 @@ func main() {
 			return err
 		}
 
-		_, err = lambda.NewPermission(ctx, "lambdaPermission", &lambda.PermissionArgs{
+		testIntegration, err := apigatewayv2.NewIntegration(ctx, "testFunctionIntegration", &apigatewayv2.IntegrationArgs{
+			ApiId:                gateway.ID(),
+			IntegrationType:      pulumi.String("AWS_PROXY"),
+			IntegrationMethod:    pulumi.String("POST"),
+			IntegrationUri:       testFunction.Arn,
+			PayloadFormatVersion: pulumi.String("2.0"),
+			PassthroughBehavior:  pulumi.String("WHEN_NO_MATCH"),
+		})
+		if err != nil {
+			return err
+		}
+
+		_, err = lambda.NewPermission(ctx, "timeLambdaPermission", &lambda.PermissionArgs{
 			Action:    pulumi.String("lambda:InvokeFunction"),
 			Function:  timeFunction,
+			Principal: pulumi.String("apigateway.amazonaws.com"),
+			SourceArn: gateway.ExecutionArn.ApplyT(func(executionArn string) (string, error) {
+				return fmt.Sprintf("%v/*", executionArn), nil
+			}).(pulumi.StringOutput),
+		})
+		if err != nil {
+			return err
+		}
+
+		_, err = lambda.NewPermission(ctx, "testLambdaPermission", &lambda.PermissionArgs{
+			Action:    pulumi.String("lambda:InvokeFunction"),
+			Function:  testFunction,
 			Principal: pulumi.String("apigateway.amazonaws.com"),
 			SourceArn: gateway.ExecutionArn.ApplyT(func(executionArn string) (string, error) {
 				return fmt.Sprintf("%v/*", executionArn), nil
@@ -85,8 +124,19 @@ func main() {
 
 		timeRoute, err := apigatewayv2.NewRoute(ctx, "timeRoute", &apigatewayv2.RouteArgs{
 			ApiId:    gateway.ID(),
-			RouteKey: pulumi.String("GET /test"),
+			RouteKey: pulumi.String("GET /time"),
 			Target:   target,
+		})
+		if err != nil {
+			return err
+		}
+
+		testTarget := pulumi.Sprintf("integrations/%s", testIntegration.ID())
+
+		testRoute, err := apigatewayv2.NewRoute(ctx, "testRoute", &apigatewayv2.RouteArgs{
+			ApiId:    gateway.ID(),
+			RouteKey: pulumi.String("GET /test"),
+			Target:   testTarget,
 		})
 		if err != nil {
 			return err
@@ -99,6 +149,11 @@ func main() {
 			RouteSettings: apigatewayv2.StageRouteSettingArray{
 				&apigatewayv2.StageRouteSettingArgs{
 					RouteKey:             timeRoute.RouteKey,
+					ThrottlingRateLimit:  pulumi.Float64(10000.00),
+					ThrottlingBurstLimit: pulumi.Int(5000),
+				},
+				&apigatewayv2.StageRouteSettingArgs{
+					RouteKey:             testRoute.RouteKey,
 					ThrottlingRateLimit:  pulumi.Float64(10000.00),
 					ThrottlingBurstLimit: pulumi.Int(5000),
 				},
