@@ -25,32 +25,32 @@ func main() {
 			}`),
 		})
 
-		args := &lambda.FunctionArgs{
-			Handler: pulumi.String("handler"),
-			Role:    role.Arn,
-			Runtime: pulumi.String("provided.al2"),
-			Code:    pulumi.NewFileArchive("../timeHandler.zip"),
-		}
-
-		testArgs := &lambda.FunctionArgs{
-			Handler: pulumi.String("handler"),
-			Role:    role.Arn,
-			Runtime: pulumi.String("provided.al2"),
-			Code:    pulumi.NewFileArchive("../testHandler.zip"),
-		}
-
-		timeFunction, err := lambda.NewFunction(
-			ctx,
-			"timeFunction",
-			args)
+		timeFunction, err := CreateLambda(CreateLambdaArgs{
+			ctx:  ctx,
+			name: "timeFunction",
+			role: role,
+			code: pulumi.NewFileArchive("../timeHandler.zip"),
+		})
 		if err != nil {
 			return err
 		}
 
-		testFunction, err := lambda.NewFunction(
-			ctx,
-			"testFunction",
-			testArgs)
+		testFunction, err := CreateLambda(CreateLambdaArgs{
+			ctx:  ctx,
+			name: "testFunction",
+			role: role,
+			code: pulumi.NewFileArchive("../testHandler.zip"),
+		})
+		if err != nil {
+			return err
+		}
+
+		_, err = CreateLambda(CreateLambdaArgs{
+			ctx:  ctx,
+			name: "nameFunction",
+			role: role,
+			code: pulumi.NewFileArchive("../nameHandler.zip"),
+		})
 		if err != nil {
 			return err
 		}
