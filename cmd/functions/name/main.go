@@ -10,9 +10,12 @@ import (
 )
 
 func Handler(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
-	user := name.GetName()
+	username := name.GetName()
 
-	response, err := json.Marshal(user)
+	test := make(map[string]string)
+	test["user"] = username
+
+	response, err := json.Marshal(test)
 	if err != nil {
 		return events.APIGatewayProxyResponse{}, err
 	}

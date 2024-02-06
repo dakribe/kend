@@ -1,11 +1,8 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/apigatewayv2"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/iam"
-	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/lambda"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 )
 
@@ -45,7 +42,7 @@ func main() {
 			return err
 		}
 
-		_, err = CreateLambda(CreateLambdaArgs{
+		nameFunction, err := CreateLambda(CreateLambdaArgs{
 			ctx:  ctx,
 			name: "nameFunction",
 			role: role,
@@ -72,71 +69,28 @@ func main() {
 			return err
 		}
 
-		integration, err := apigatewayv2.NewIntegration(ctx, "timeFunctionIntegration", &apigatewayv2.IntegrationArgs{
-			ApiId:                gateway.ID(),
-			IntegrationType:      pulumi.String("AWS_PROXY"),
-			IntegrationMethod:    pulumi.String("POST"),
-			IntegrationUri:       timeFunction.Arn,
-			PayloadFormatVersion: pulumi.String("2.0"),
-			PassthroughBehavior:  pulumi.String("WHEN_NO_MATCH"),
+		testRoute, err := CreateApiRoute(ctx, gateway, NewRouteArgs{
+			function:  testFunction,
+			routeKey:  pulumi.String("GET /"),
+			routeName: "test",
 		})
 		if err != nil {
 			return err
 		}
 
-		testIntegration, err := apigatewayv2.NewIntegration(ctx, "testFunctionIntegration", &apigatewayv2.IntegrationArgs{
-			ApiId:                gateway.ID(),
-			IntegrationType:      pulumi.String("AWS_PROXY"),
-			IntegrationMethod:    pulumi.String("POST"),
-			IntegrationUri:       testFunction.Arn,
-			PayloadFormatVersion: pulumi.String("2.0"),
-			PassthroughBehavior:  pulumi.String("WHEN_NO_MATCH"),
+		timeRoute, err := CreateApiRoute(ctx, gateway, NewRouteArgs{
+			function:  timeFunction,
+			routeKey:  pulumi.String("GET /time"),
+			routeName: "time",
 		})
 		if err != nil {
 			return err
 		}
 
-		_, err = lambda.NewPermission(ctx, "timeLambdaPermission", &lambda.PermissionArgs{
-			Action:    pulumi.String("lambda:InvokeFunction"),
-			Function:  timeFunction,
-			Principal: pulumi.String("apigateway.amazonaws.com"),
-			SourceArn: gateway.ExecutionArn.ApplyT(func(executionArn string) (string, error) {
-				return fmt.Sprintf("%v/*", executionArn), nil
-			}).(pulumi.StringOutput),
-		})
-		if err != nil {
-			return err
-		}
-
-		_, err = lambda.NewPermission(ctx, "testLambdaPermission", &lambda.PermissionArgs{
-			Action:    pulumi.String("lambda:InvokeFunction"),
-			Function:  testFunction,
-			Principal: pulumi.String("apigateway.amazonaws.com"),
-			SourceArn: gateway.ExecutionArn.ApplyT(func(executionArn string) (string, error) {
-				return fmt.Sprintf("%v/*", executionArn), nil
-			}).(pulumi.StringOutput),
-		})
-		if err != nil {
-			return err
-		}
-
-		target := pulumi.Sprintf("integrations/%s", integration.ID())
-
-		timeRoute, err := apigatewayv2.NewRoute(ctx, "timeRoute", &apigatewayv2.RouteArgs{
-			ApiId:    gateway.ID(),
-			RouteKey: pulumi.String("GET /time"),
-			Target:   target,
-		})
-		if err != nil {
-			return err
-		}
-
-		testTarget := pulumi.Sprintf("integrations/%s", testIntegration.ID())
-
-		testRoute, err := apigatewayv2.NewRoute(ctx, "testRoute", &apigatewayv2.RouteArgs{
-			ApiId:    gateway.ID(),
-			RouteKey: pulumi.String("GET /test"),
-			Target:   testTarget,
+		nameRoute, err := CreateApiRoute(ctx, gateway, NewRouteArgs{
+			function:  nameFunction,
+			routeKey:  pulumi.String("GET /name"),
+			routeName: "name",
 		})
 		if err != nil {
 			return err
@@ -144,7 +98,7 @@ func main() {
 
 		_, err = apigatewayv2.NewStage(ctx, "apiStage", &apigatewayv2.StageArgs{
 			ApiId:      gateway.ID(),
-			Name:       pulumi.String("prod"),
+			Name:       pulumi.String("dev"),
 			AutoDeploy: pulumi.Bool(true),
 			RouteSettings: apigatewayv2.StageRouteSettingArray{
 				&apigatewayv2.StageRouteSettingArgs{
@@ -157,13 +111,19 @@ func main() {
 					ThrottlingRateLimit:  pulumi.Float64(10000.00),
 					ThrottlingBurstLimit: pulumi.Int(5000),
 				},
+				&apigatewayv2.StageRouteSettingArgs{
+					RouteKey:             nameRoute.RouteKey,
+					ThrottlingRateLimit:  pulumi.Float64(10000.00),
+					ThrottlingBurstLimit: pulumi.Int(5000),
+				},
 			},
 		})
 		if err != nil {
 			return err
 		}
 
-		ctx.Export("API Endpoint: ", gateway.ApiEndpoint)
+		apiUrl := pulumi.Sprintf("%s/dev/", gateway.ApiEndpoint)
+		ctx.Export("API Endpoint: ", apiUrl)
 
 		return nil
 	})
