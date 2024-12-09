@@ -2,7 +2,8 @@
   "version": "4",
   "specifiers": {
     "jsr:@std/assert@1": "1.0.9",
-    "jsr:@std/internal@^1.0.5": "1.0.5"
+    "jsr:@std/internal@^1.0.5": "1.0.5",
+    "npm:effect@^3.11.3": "3.11.3"
   },
   "jsr": {
     "@std/assert@1.0.9": {
@@ -15,9 +16,27 @@
       "integrity": "54a546004f769c1ac9e025abd15a76b6671ddc9687e2313b67376125650dc7ba"
     }
   },
+  "npm": {
+    "effect@3.11.3": {
+      "integrity": "sha512-pbdB97Ejdbu7YvnkOf5J8y9J0ZIveAK+uKUZJpZGqUyTfykpL9VqfzahjWfdkseDqsktEZS7bFuJ9IBowVWNpA==",
+      "dependencies": [
+        "fast-check"
+      ]
+    },
+    "fast-check@3.23.1": {
+      "integrity": "sha512-u/MudsoQEgBUZgR5N1v87vEgybeVYus9VnDVaIkxkkGP2jt54naghQ3PCQHJiogS8U/GavZCUPFfx3Xkp+NaHw==",
+      "dependencies": [
+        "pure-rand"
+      ]
+    },
+    "pure-rand@6.1.0": {
+      "integrity": "sha512-bVWawvoZoBYpp6yIoQtQXHZjmz35RSVHnUOTefl8Vcjr8snTPY1wnpSPMWekcFwbxI6gtmT7rSYPFvz71ldiOA=="
+    }
+  },
   "workspace": {
     "dependencies": [
-      "jsr:@std/assert@1"
+      "jsr:@std/assert@1",
+      "npm:effect@^3.11.3"
     ]
   }
 }
