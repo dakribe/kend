@@ -1,11 +1,15 @@
 {
   "version": "4",
   "specifiers": {
+    "jsr:@hono/hono@^4.6.13": "4.6.13",
     "jsr:@std/assert@1": "1.0.9",
     "jsr:@std/internal@^1.0.5": "1.0.5",
-    "npm:effect@^3.11.3": "3.11.3"
+    "npm:create-hono@*": "0.14.3"
   },
   "jsr": {
+    "@hono/hono@4.6.13": {
+      "integrity": "198970fc6facf71a88ee57aa1ed32143b56bcb0f842fa965ca3ee7d6fdd21a8e"
+    },
     "@std/assert@1.0.9": {
       "integrity": "a9f0c611a869cc791b26f523eec54c7e187aab7932c2c8e8bea0622d13680dcd",
       "dependencies": [
@@ -17,26 +21,20 @@
     }
   },
   "npm": {
-    "effect@3.11.3": {
-      "integrity": "sha512-pbdB97Ejdbu7YvnkOf5J8y9J0ZIveAK+uKUZJpZGqUyTfykpL9VqfzahjWfdkseDqsktEZS7bFuJ9IBowVWNpA==",
-      "dependencies": [
-        "fast-check"
-      ]
-    },
-    "fast-check@3.23.1": {
-      "integrity": "sha512-u/MudsoQEgBUZgR5N1v87vEgybeVYus9VnDVaIkxkkGP2jt54naghQ3PCQHJiogS8U/GavZCUPFfx3Xkp+NaHw==",
-      "dependencies": [
-        "pure-rand"
-      ]
-    },
-    "pure-rand@6.1.0": {
-      "integrity": "sha512-bVWawvoZoBYpp6yIoQtQXHZjmz35RSVHnUOTefl8Vcjr8snTPY1wnpSPMWekcFwbxI6gtmT7rSYPFvz71ldiOA=="
+    "create-hono@0.14.3": {
+      "integrity": "sha512-CuZJAj6dmqAwmTdPM5iFl5vQAD5at6aBKnEaiP5zUYNuiInMtalSXDrMj79lmcdJD/hXNsQf14upMx2se7ZVxA=="
     }
   },
   "workspace": {
     "dependencies": [
-      "jsr:@std/assert@1",
-      "npm:effect@^3.11.3"
-    ]
+      "jsr:@std/assert@1"
+    ],
+    "members": {
+      "apps/server": {
+        "dependencies": [
+          "jsr:@hono/hono@^4.6.13"
+        ]
+      }
+    }
   }
 }
