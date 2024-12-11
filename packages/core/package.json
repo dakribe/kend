@@ -16,7 +16,8 @@
   "dependencies": {
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.38.0",
-    "postgres": "^3.4.5"
+    "effect": "^3.11.5",
+    "postgres": "^3.4.5",
+    "resend": "^4.0.1"
   }
 }
-
