@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/dakribe/kend/internal/applications"
 	"github.com/dakribe/kend/internal/postgres"
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
@@ -17,11 +18,14 @@ func main() {
 		log.Fatal("Error loading .env file")
 	}
 
-	db := postgres.NewPostgres(os.Getenv("DATABASE_URL"))
+	pool := postgres.NewPostgres(os.Getenv("DATABASE_URL"))
+	appStore := applications.NewApplicationStore(pool)
+	appSvc := applications.NewApplicationService(appStore)
 
 	e := echo.New()
 	e.Use(middleware.Logger())
 
+	applications.NewAppliationRoutes(appSvc).Register(e)
 	e.GET("/", func(c echo.Context) error {
 		return c.String(http.StatusOK, "Hello kend")
 	})
