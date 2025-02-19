@@ -1,0 +1,1 @@
+[{"sql":["CREATE TABLE \"applications\" (\n\t\"id\" uuid\n);\n"],"bps":true,"folderMillis":1739937893045,"hash":"e6a75dcca6e18e5bd9bb91f150964d609ec7a248fc6745df4dd27111e301a35b"}]
