@@ -1,6 +1,7 @@
 package applications
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -22,6 +23,7 @@ type CreateReq struct {
 }
 
 func (r *ApplicationRoutes) Register(e *echo.Echo) {
+	e.GET("/all", r.getAll)
 	e.POST("/create", r.create)
 }
 
@@ -41,4 +43,14 @@ func (r *ApplicationRoutes) create(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, app)
+}
+
+func (r *ApplicationRoutes) getAll(c echo.Context) error {
+	apps, err := r.appSvc.GetApplications(c.Request().Context())
+	fmt.Println(err)
+	if err != nil {
+		return c.String(http.StatusInternalServerError, "server error")
+	}
+
+	return c.JSON(http.StatusOK, apps)
 }

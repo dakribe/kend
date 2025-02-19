@@ -3,6 +3,7 @@ package applications
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -20,9 +21,10 @@ func NewApplicationStore(pool *pgxpool.Pool) *ApplicationStore {
 }
 
 type Application struct {
-	ID      uuid.UUID
-	Company string
-	Title   string
+	ID        uuid.UUID
+	Company   string
+	Title     string
+	CreatedAt time.Time
 }
 
 func (s *ApplicationStore) CreateApplication(ctx context.Context, company, title string) (*Application, error) {
@@ -40,4 +42,25 @@ func (s *ApplicationStore) CreateApplication(ctx context.Context, company, title
 	}
 
 	return &app, nil
+}
+
+func (s *ApplicationStore) GetAll(ctx context.Context) (*[]Application, error) {
+	query := `SELECT * FROM APPLICATIONS`
+	rows, err := s.pool.Query(ctx, query)
+	if err != nil {
+		return &[]Application{}, fmt.Errorf("failed to retrieve applications: %w", err)
+	}
+
+	defer rows.Close()
+
+	var applications []Application
+	for rows.Next() {
+		var app Application
+		if err := rows.Scan(&app.ID, &app.Company, &app.Title, &app.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan application row: %w", err)
+		}
+		applications = append(applications, app)
+	}
+
+	return &applications, nil
 }

@@ -28,3 +28,12 @@ func (s *ApplicationService) CreateApplication(ctx context.Context, params Creat
 
 	return app, nil
 }
+
+func (s *ApplicationService) GetApplications(ctx context.Context) (*[]Application, error) {
+	apps, err := s.appStore.GetAll(ctx)
+	if err != nil {
+		return &[]Application{}, fmt.Errorf("Error getting applications: %w", err)
+	}
+
+	return apps, nil
+}
