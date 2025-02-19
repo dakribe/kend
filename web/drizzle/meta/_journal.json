@@ -8,6 +8,13 @@
       "when": 1739937893045,
       "tag": "0000_nappy_nightshade",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1739941841488,
+      "tag": "0001_old_talisman",
+      "breakpoints": true
     }
   ]
 }

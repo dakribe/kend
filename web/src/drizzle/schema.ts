@@ -7,3 +7,4 @@ export const applications = pgTable("applications", {
 });
 
 export type Application = typeof applications.$inferSelect;
+export type ApplicationParams = typeof applications.$inferInsert;
