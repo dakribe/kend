@@ -1,24 +1,15 @@
 import { createResource, createSignal, For } from "solid-js";
-import { db } from "../drizzle/db";
-import {
-	ApplicationParams,
-	applications as applicationsTable,
-} from "../drizzle/schema";
 import { A } from "@solidjs/router";
-
-async function createApplication(params: ApplicationParams) {
-	await db.insert(applicationsTable).values(params);
-}
-
-async function getApplications() {
-	const applications = await db.select().from(applicationsTable);
-	return applications;
-}
+import {
+	createApplication,
+	deleteApplication,
+	getApplications,
+} from "../drizzle/applications";
 
 export function Root() {
 	const [title, setTitle] = createSignal("");
 	const [company, setCompany] = createSignal("");
-	const [applications] = createResource(getApplications);
+	const [applications, { refetch }] = createResource(getApplications);
 
 	const handleAdd = (e: MouseEvent) => {
 		e.preventDefault();
@@ -26,6 +17,12 @@ export function Root() {
 			title: title(),
 			company: company(),
 		});
+		refetch();
+	};
+
+	const handleDelete = (id: string) => {
+		deleteApplication(id);
+		refetch();
 	};
 
 	return (
@@ -41,11 +38,14 @@ export function Root() {
 			<button onClick={(e) => handleAdd(e)}>Add</button>
 			<For each={applications()}>
 				{(app) => (
-					<A href={`/${app.id}`}>
-						<p>
-							{app.title} - {app.company}
-						</p>
-					</A>
+					<>
+						<A href={`/${app.id}`}>
+							<p>
+								{app.title} - {app.company}
+							</p>
+						</A>
+						<button onClick={() => handleDelete(app.id)}>Delete</button>
+					</>
 				)}
 			</For>
 		</div>
