@@ -1,9 +1,19 @@
 import { defineConfig } from "vite";
-import solid from "vite-plugin-solid";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+import path from "path";
+import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
 
+// https://vite.dev/config/
 export default defineConfig({
-	plugins: [solid()],
-	optimizeDeps: {
-		exclude: ["@electric-sql/pglite"],
+	plugins: [
+		tailwindcss(),
+		TanStackRouterVite({ autoCodeSplitting: true }),
+		react(),
+	],
+	resolve: {
+		alias: {
+			"@": path.resolve(__dirname, "./src"),
+		},
 	},
 });
