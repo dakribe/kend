@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { routeTree } from "./routeTree.gen";
+import { ThemeProvider } from "./providers/theme-provider";
 
 const router = createRouter({ routeTree });
 
@@ -14,6 +15,8 @@ declare module "@tanstack/react-router" {
 
 createRoot(document.getElementById("root")!).render(
 	<StrictMode>
-		<RouterProvider router={router} />
+		<ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
+			<RouterProvider router={router} />
+		</ThemeProvider>
 	</StrictMode>,
 );
