@@ -3,3 +3,7 @@ CREATE TABLE "application" (
 	"title" varchar(255) NOT NULL,
 	"company" varchar(255) NOT NULL
 );
+--> statement-breakpoint
+CREATE TABLE "system" (
+	"version" integer DEFAULT 0 NOT NULL
+);

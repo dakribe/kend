@@ -1,5 +1,5 @@
 {
-  "id": "187c31e9-bf74-4e7c-a39c-58f728f478df",
+  "id": "3879e53b-2697-4bc2-bae2-a1ff1672f742",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -36,6 +36,26 @@
           "type": "varchar(255)",
           "primaryKey": false,
           "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.system": {
+      "name": "system",
+      "schema": "",
+      "columns": {
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
         }
       },
       "indexes": {},

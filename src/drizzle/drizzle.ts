@@ -5,3 +5,7 @@ export const applicationTable = pgTable("application", {
 	title: varchar({ length: 255 }).notNull(),
 	company: varchar({ length: 255 }).notNull(),
 });
+
+export const systemTable = pgTable("system", {
+	version: integer().notNull().default(0),
+});
