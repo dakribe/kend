@@ -8,4 +8,7 @@ export default defineConfig({
 		TanStackRouterVite({ target: "react", autoCodeSplitting: true }),
 		react(),
 	],
+	optimizeDeps: {
+		exclude: ["@electric-sql/pglite"],
+	},
 });
