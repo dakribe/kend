@@ -13,4 +13,5 @@ export const usePgliteDrizzle = () => {
 			"usePgliteDrizzle must be used within PgliteDrizzleProvider",
 		);
 	}
+	return context;
 };
