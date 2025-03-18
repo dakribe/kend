@@ -3,6 +3,7 @@ import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { RuntimeClient } from "../services/runtime-client";
 import { Pglite } from "../services/pglite";
 import { PGliteProvider } from "@electric-sql/pglite-react";
+import { PgliteDrizzleContext } from "../hooks/use-pglite-drizzle";
 
 export const Route = createRootRoute({
 	component: Root,
@@ -11,11 +12,13 @@ export const Route = createRootRoute({
 });
 
 function Root() {
-	const { client } = Route.useLoaderData();
+	const { client, orm } = Route.useLoaderData();
 	return (
 		<PGliteProvider db={client}>
-			<Outlet />
-			<TanStackRouterDevtools position="bottom-right" />
+			<PgliteDrizzleContext.Provider value={orm}>
+				<Outlet />
+				<TanStackRouterDevtools position="bottom-right" />
+			</PgliteDrizzleContext.Provider>
 		</PGliteProvider>
 	);
 }
