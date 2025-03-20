@@ -57,3 +57,44 @@ export const useQuery = <A, I>(
 		}),
 	});
 };
+
+export const useQuerySingle = <A, I>(
+	...args: Parameters<typeof useQueryEffect<A, I>>
+) => {
+	const results = useQueryEffect(...args);
+	return Either.match(results, {
+		onLeft: (_) =>
+			Match.value(_).pipe(
+				Match.tagsExhaustive({
+					InvalidData: ({ parseError }) => ({
+						error: parseError,
+						loading: false as const,
+						data: undefined,
+						empty: false as const,
+					}),
+					MissingData: (_) => ({
+						loading: true as const,
+						data: undefined,
+						error: undefined,
+						empty: false as const,
+					}),
+				}),
+			),
+		onRight: (rows) => {
+			const head = rows[0];
+			return head === undefined
+				? {
+						data: undefined,
+						loading: false as const,
+						error: undefined,
+						empty: true as const,
+					}
+				: {
+						data: head,
+						loading: false as const,
+						error: undefined,
+						empty: false as const,
+					};
+		},
+	});
+};
