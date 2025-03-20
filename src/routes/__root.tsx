@@ -6,6 +6,8 @@ import { PGliteProvider } from "@electric-sql/pglite-react";
 import { PgliteDrizzleContext } from "../hooks/use-pglite-drizzle";
 import { Effect } from "effect";
 import { Migrations } from "@/services/migrations";
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { AppSidebar } from "@/components/app-sidebar";
 
 export const Route = createRootRoute({
 	component: Root,
@@ -25,8 +27,12 @@ function Root() {
 	return (
 		<PGliteProvider db={client}>
 			<PgliteDrizzleContext.Provider value={orm}>
-				<Outlet />
-				<TanStackRouterDevtools position="bottom-right" />
+				<SidebarProvider>
+					<AppSidebar />
+					<SidebarTrigger />
+					<Outlet />
+					<TanStackRouterDevtools position="bottom-right" />
+				</SidebarProvider>
 			</PgliteDrizzleContext.Provider>
 		</PGliteProvider>
 	);
