@@ -2,6 +2,8 @@ import { Data, Effect } from "effect";
 import { Pglite } from "./pglite";
 import { PGlite } from "@electric-sql/pglite";
 import v0000 from "../drizzle/0000_breezy_betty_brant.sql?raw";
+import { systemTable } from "@/drizzle/drizzle";
+import { singleResult } from "@/lib/utils";
 
 class MigrationsError extends Data.TaggedError("MigrationsError")<{
 	cause: unknown;
@@ -16,8 +18,42 @@ const execute = (client: PGlite) => (sql: string) =>
 export class Migrations extends Effect.Service<Migrations>()("Migrations", {
 	dependencies: [Pglite.Default],
 	effect: Effect.gen(function* () {
-		const { client } = yield* Pglite;
+		const { query, client } = yield* Pglite;
+		const migrate = execute(client);
 
-		return [execute(client)(v0000)] as const;
+		// Add new migrations here
+		const migrations = [migrate(v0000)] as const;
+		const latestMigration = migrations.length;
+
+		return {
+			apply: Effect.gen(function* () {
+				const { version } = yield* query((_) =>
+					_.select().from(systemTable),
+				).pipe(
+					singleResult(
+						() => new MigrationsError({ cause: "System not found" }),
+					),
+					Effect.catchTags({
+						PgliteError: () => Effect.succeed({ version: 0 }), // No db yet
+					}),
+				);
+
+				yield* Effect.all(migrations.slice(version));
+
+				if (version === 0) {
+					yield* query((_) => _.insert(systemTable).values({ version: 0 }));
+				}
+
+				yield* query((_) =>
+					_.update(systemTable).set({ version: latestMigration }),
+				);
+
+				yield* Effect.log(
+					version === latestMigration
+						? "Database up to date"
+						: `Migrations done (from ${version} to ${latestMigration})`,
+				);
+			}),
+		};
 	}),
 }) {}

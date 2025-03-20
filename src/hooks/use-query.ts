@@ -1,6 +1,6 @@
 import { useLiveQuery } from "@electric-sql/pglite-react";
 import type { Query } from "drizzle-orm";
-import { Data, Either, flow, ParseResult, pipe, Schema } from "effect";
+import { Data, Either, flow, Match, ParseResult, pipe, Schema } from "effect";
 import { usePgliteDrizzle } from "./use-pglite-drizzle";
 
 class MissingData extends Data.TaggedError("MissingData")<{}> {}
@@ -8,7 +8,7 @@ class InvalidData extends Data.TaggedError("InvalidData")<{
 	parseError: ParseResult.ParseError;
 }> {}
 
-export const useQuery = <A, I>(
+const useQueryEffect = <A, I>(
 	query: (orm: ReturnType<typeof usePgliteDrizzle>) => Query,
 	schema: Schema.Schema<A, I>,
 ) => {
@@ -25,4 +25,35 @@ export const useQuery = <A, I>(
 			),
 		),
 	);
+};
+
+export const useQuery = <A, I>(
+	...args: Parameters<typeof useQueryEffect<A, I>>
+) => {
+	const results = useQueryEffect(...args);
+	return Either.match(results, {
+		onLeft: (_) =>
+			Match.value(_).pipe(
+				Match.tagsExhaustive({
+					InvalidData: ({ parseError }) => ({
+						error: parseError,
+						loading: false as const,
+						data: undefined,
+						empty: false as const,
+					}),
+					MissingData: (_) => ({
+						loading: true as const,
+						data: undefined,
+						error: undefined,
+						empty: false as const,
+					}),
+				}),
+			),
+		onRight: (rows) => ({
+			data: rows,
+			loading: false as const,
+			error: undefined,
+			empty: rows.length === 0,
+		}),
+	});
 };
