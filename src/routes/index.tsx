@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/button";
+import { useApplications } from "@/pglite/application";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/")({
@@ -6,10 +6,14 @@ export const Route = createFileRoute("/")({
 });
 
 function RouteComponent() {
+	const { data } = useApplications();
 	return (
 		<div>
-			<p>Index</p>
-			<Button>Button</Button>
+			{data?.map((application) => (
+				<div key={application.id}>
+					<p>{application.company}</p>
+				</div>
+			))}
 		</div>
 	);
 }
