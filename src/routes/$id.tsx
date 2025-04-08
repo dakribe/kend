@@ -12,13 +12,9 @@ function RouteComponent() {
 		"applications",
 	]);
 
-	const application = applications?.find((application) => {
-		if (typeof application.id === "number") {
-			return application.id === parseInt(id, 10);
-		} else {
-			return application.id === id;
-		}
-	});
+	const application = applications?.find(
+		(application) => application.id === id,
+	);
 
 	return (
 		<div>

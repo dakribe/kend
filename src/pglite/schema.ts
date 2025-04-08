@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar } from "drizzle-orm/pg-core";
+import { integer, pgTable, uuid, varchar } from "drizzle-orm/pg-core";
 
 export const applicationTable = pgTable("applications", {
 	id: uuid("id").defaultRandom().primaryKey(),
@@ -8,3 +8,7 @@ export const applicationTable = pgTable("applications", {
 
 export type Application = typeof applicationTable.$inferSelect;
 export type ApplicationInsert = typeof applicationTable.$inferInsert;
+
+export const versionTable = pgTable("version", {
+	id: integer().notNull().default(0),
+});

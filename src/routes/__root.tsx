@@ -4,7 +4,7 @@ import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 
 export const Route = createRootRoute({
 	component: RootComponent,
-	loader: () => migrate(),
+	loader: async () => await migrate(),
 	notFoundComponent: () => <div>404 Not Found.</div>,
 });
 

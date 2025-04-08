@@ -1,5 +1,6 @@
 import { db } from "./pglite";
-import type { MigrationConfig } from "drizzle-orm/migrator";
+import migrations from "./migrations.json";
+import { MigrationConfig } from "drizzle-orm/migrator";
 
 export async function migrate() {
 	db.dialect.migrate(migrations, db.session, {

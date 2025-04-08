@@ -15,6 +15,17 @@ export function useApplications() {
 	});
 }
 
+export async function getById(id: string) {
+	return useQuery({
+		queryKey: ["application"],
+		queryFn: async () =>
+			await db
+				.select()
+				.from(applicationTable)
+				.where(eq(applicationTable.id, id)),
+	});
+}
+
 export async function createApplication(params: ApplicationInsert) {
 	await db.insert(applicationTable).values(params);
 }

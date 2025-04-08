@@ -2,7 +2,7 @@ import { readMigrationFiles } from "drizzle-orm/migrator";
 import { join } from "node:path";
 
 const migrations = readMigrationFiles({
-	migrationsFolder: "./",
+	migrationsFolder: "./src/drizzle",
 });
 
 await Bun.write(
