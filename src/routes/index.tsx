@@ -1,5 +1,5 @@
 import { useApplications } from "@/pglite/application";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/")({
 	component: RouteComponent,
@@ -10,9 +10,10 @@ function RouteComponent() {
 	return (
 		<div>
 			{data?.map((application) => (
-				<div key={application.id}>
+				<Link to="/$id" params={{ id: application.id }} key={application.id}>
+					<p>{application.title}</p>
 					<p>{application.company}</p>
-				</div>
+				</Link>
 			))}
 		</div>
 	);
