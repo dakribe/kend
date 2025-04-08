@@ -11,11 +11,11 @@ export const Route = createRootRoute({
 function RootComponent() {
 	return (
 		<>
-			<div>
+			<div className="mx-auto max-w-[85%] bg-accent min-h-screen">
 				<Link to="/">Home</Link>
 				<Link to="/create">Create</Link>
+				<Outlet />
 			</div>
-			<Outlet />
 			<TanStackRouterDevtools />
 		</>
 	);

@@ -21,6 +21,7 @@ function RouteComponent() {
 			<p>Title: {application?.title}</p>
 			<p>Company: {application?.company}</p>
 			<p>Id: {application?.id}</p>
+			<p>Client Id: {application?.clientId}</p>
 		</div>
 	);
 }

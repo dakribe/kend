@@ -1,5 +1,5 @@
 {
-  "id": "59793077-906b-4681-bf59-63d8668d73b3",
+  "id": "65496620-601f-4922-817f-c93ef7a273eb",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -15,6 +15,12 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
+        "client_id": {
+          "name": "client_id",
+          "type": "bigserial",
+          "primaryKey": false,
+          "notNull": true
+        },
         "title": {
           "name": "title",
           "type": "varchar",
@@ -26,26 +32,6 @@
           "type": "varchar",
           "primaryKey": false,
           "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.version": {
-      "name": "version",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
         }
       },
       "indexes": {},
