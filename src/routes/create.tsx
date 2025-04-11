@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { createApplication } from "@/pglite/application";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/create")({
 	component: RouteComponent,
@@ -15,6 +16,7 @@ function RouteComponent() {
 	const handleSubmit = (e: React.FormEvent) => {
 		e.preventDefault();
 		createApplication({ title, company });
+		toast(`Created Application: ${company}`);
 	};
 
 	return (
