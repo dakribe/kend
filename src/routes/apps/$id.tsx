@@ -1,13 +1,14 @@
-import { queryClient } from "@/main";
 import { Application } from "@/pglite/schema";
+import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 
-export const Route = createFileRoute("/$id")({
+export const Route = createFileRoute("/apps/$id")({
 	component: RouteComponent,
 });
 
 function RouteComponent() {
 	const id = Route.useParams().id;
+	const queryClient = useQueryClient();
 	const applications = queryClient.getQueryData<Application[]>([
 		"applications",
 	]);
