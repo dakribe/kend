@@ -1,19 +1,24 @@
 import { Title } from "@solidjs/meta";
-import Counter from "~/components/Counter";
+import { createAsync, query } from "@solidjs/router";
+import { For, Show } from "solid-js";
+import { CreateForm } from "~/application/create-form";
+import { db } from "~/drizzle";
+
+const getApplications = query(async () => {
+	"use server";
+	const applications = await db.query.application.findMany();
+	return applications;
+}, "get-applications");
 
 export default function Home() {
+	const applications = createAsync(() => getApplications());
 	return (
 		<main>
 			<Title>Hello World</Title>
-			<h1>Hello world!</h1>
-			<Counter />
-			<p>
-				Visit{" "}
-				<a href="https://start.solidjs.com" target="_blank">
-					start.solidjs.com
-				</a>{" "}
-				to learn how to build SolidStart apps.
-			</p>
+			<CreateForm />
+			<Show when={applications()?.length} fallback={<p>No applications</p>}>
+				<For each={applications()}>{(app) => <p>{app.title}</p>}</For>
+			</Show>
 		</main>
 	);
 }
