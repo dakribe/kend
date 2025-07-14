@@ -5,16 +5,24 @@
     "dev": "vinxi dev",
     "build": "vinxi build",
     "start": "vinxi start",
-    "version": "vinxi version"
+    "version": "vinxi version",
+    "db:push": "npx drizzle-kit push"
   },
   "dependencies": {
     "@solidjs/meta": "^0.29.4",
     "@solidjs/router": "^0.15.0",
     "@solidjs/start": "^1.1.0",
+    "dotenv": "^17.2.0",
+    "drizzle-orm": "^0.44.2",
+    "postgres": "^3.4.7",
     "solid-js": "^1.9.5",
     "vinxi": "^0.5.7"
   },
   "engines": {
     "node": ">=22"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.4",
+    "tsx": "^4.20.3"
   }
 }
