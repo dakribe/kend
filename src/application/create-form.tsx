@@ -1,25 +1,46 @@
-import { action, reload } from "@solidjs/router";
+import { action, useAction } from "@solidjs/router";
 import { db } from "~/drizzle";
-import { application } from "./sql";
+import { application, InsertApplication } from "./sql";
+import { createForm, SubmitHandler } from "@modular-forms/solid";
 
-const addApplication = action(async (formData: FormData) => {
+const addApplicationAction = action(async (values: InsertApplication) => {
 	"use server";
 
-	const company = String(formData.get("company"));
-	const title = String(formData.get("title"));
-
-	await db.insert(application).values({ company, title }).returning();
-	return reload({ revalidate: "get-applications" });
+	await db
+		.insert(application)
+		.values({ company: values.company, title: values.title })
+		.returning();
 }, "add-application");
 
 export function CreateForm() {
+	const create = useAction(addApplicationAction);
+	const [_, { Form, Field }] = createForm<InsertApplication>();
+
+	const handleSubmit: SubmitHandler<InsertApplication> = (values, e) => {
+		e.preventDefault();
+		create(values);
+	};
 	return (
 		<div>
-			<form action={addApplication} method="post">
-				<input type="text" name="company" placeholder="Company" />
-				<input type="text" name="title" placeholder="Title" />
+			<Form onSubmit={handleSubmit}>
+				<Field name="company">
+					{(field, props) => (
+						<>
+							<input {...props} type="text" placeholder="Company" />
+							{field.error && <div>{field.error}</div>}
+						</>
+					)}
+				</Field>
+				<Field name="title">
+					{(field, props) => (
+						<>
+							<input {...props} type="text" placeholder="title" />
+							{field.error && <div>{field.error}</div>}
+						</>
+					)}
+				</Field>
 				<button type="submit">Create</button>
-			</form>
+			</Form>
 		</div>
 	);
 }

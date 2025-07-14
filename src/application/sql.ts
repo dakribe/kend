@@ -5,3 +5,5 @@ export const application = pgTable("application", {
 	company: text("company").notNull(),
 	title: text("title").notNull(),
 });
+
+export type InsertApplication = typeof application.$inferInsert;
