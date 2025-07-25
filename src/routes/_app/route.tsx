@@ -1,3 +1,5 @@
+import { CreateDialog } from "@/components/create-dialog";
+import { Toaster } from "@/components/ui/sonner";
 import { getUser } from "@/lib/user/get-user";
 import {
 	createFileRoute,
@@ -28,9 +30,12 @@ function AppLayout() {
 	return (
 		<div>
 			<div>
-				<Link to="/dashboard"></Link>
+				<Link to="/dashboard">Dashboard</Link>
+				<Link to="/applications">Applications</Link>
 			</div>
 			<Outlet />
+			<CreateDialog />
+			<Toaster />
 		</div>
 	);
 }

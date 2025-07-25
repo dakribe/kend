@@ -1,4 +1,11 @@
-import { pgTable, text, timestamp, boolean } from "drizzle-orm/pg-core";
+import {
+	pgTable,
+	text,
+	timestamp,
+	boolean,
+	uuid,
+	varchar,
+} from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
 	id: text("id").primaryKey(),
@@ -59,3 +66,14 @@ export const verification = pgTable("verification", {
 		() => /* @__PURE__ */ new Date(),
 	),
 });
+
+export const jobApplication = pgTable("job_application", {
+	id: uuid("id").defaultRandom().primaryKey(),
+	company: varchar("company", { length: 255 }).notNull(),
+	title: varchar("title", { length: 255 }).notNull(),
+
+	userId: text("user_id").references(() => user.id),
+});
+
+export type JobApplication = typeof jobApplication.$inferSelect;
+export type InsertJobApplication = typeof jobApplication.$inferInsert;
