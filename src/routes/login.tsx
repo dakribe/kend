@@ -6,8 +6,8 @@ import {
 	CardDescription,
 	CardContent,
 } from "@/components/ui/card";
-import { getUser } from "@/lib/auth/auth";
 import { authClient } from "@/lib/auth/auth-client";
+import { getUser } from "@/lib/user/get-user";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/login")({

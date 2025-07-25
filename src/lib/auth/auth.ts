@@ -1,8 +1,6 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "../drizzle";
-import { createServerFn } from "@tanstack/react-start";
-import { authMiddleware } from "./middleware";
 
 export const auth = betterAuth({
 	database: drizzleAdapter(db, {
@@ -15,9 +13,3 @@ export const auth = betterAuth({
 		},
 	},
 });
-
-export const getUser = createServerFn({ method: "GET" })
-	.middleware([authMiddleware])
-	.handler(async ({ context }) => {
-		return context.user;
-	});
