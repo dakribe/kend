@@ -21,7 +21,7 @@ function Dashboard() {
 
 	return (
 		<div>
-			<p>{user.name}</p>
+			<p>Hello, {user.name}</p>
 			<Button onClick={handleSignOut}>Sign Out</Button>
 		</div>
 	);

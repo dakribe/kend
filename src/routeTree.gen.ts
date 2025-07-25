@@ -16,6 +16,7 @@ import { Route as AppRouteRouteImport } from './routes/_app/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppDashboardRouteImport } from './routes/_app/dashboard'
 import { Route as AppApplicationsRouteImport } from './routes/_app/applications'
+import { Route as AppApplicationIdRouteImport } from './routes/_app/application/$id'
 import { ServerRoute as ApiAuthSplatServerRouteImport } from './routes/api/auth/$'
 
 const rootServerRouteImport = createServerRootRoute()
@@ -44,6 +45,11 @@ const AppApplicationsRoute = AppApplicationsRouteImport.update({
   path: '/applications',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppApplicationIdRoute = AppApplicationIdRouteImport.update({
+  id: '/application/$id',
+  path: '/application/$id',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const ApiAuthSplatServerRoute = ApiAuthSplatServerRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -55,12 +61,14 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/applications': typeof AppApplicationsRoute
   '/dashboard': typeof AppDashboardRoute
+  '/application/$id': typeof AppApplicationIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/applications': typeof AppApplicationsRoute
   '/dashboard': typeof AppDashboardRoute
+  '/application/$id': typeof AppApplicationIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -69,12 +77,18 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/_app/applications': typeof AppApplicationsRoute
   '/_app/dashboard': typeof AppDashboardRoute
+  '/_app/application/$id': typeof AppApplicationIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/applications' | '/dashboard'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/applications'
+    | '/dashboard'
+    | '/application/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/applications' | '/dashboard'
+  to: '/' | '/login' | '/applications' | '/dashboard' | '/application/$id'
   id:
     | '__root__'
     | '/'
@@ -82,6 +96,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/_app/applications'
     | '/_app/dashboard'
+    | '/_app/application/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -148,6 +163,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppApplicationsRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/_app/application/$id': {
+      id: '/_app/application/$id'
+      path: '/application/$id'
+      fullPath: '/application/$id'
+      preLoaderRoute: typeof AppApplicationIdRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
   }
 }
 declare module '@tanstack/react-start/server' {
@@ -165,11 +187,13 @@ declare module '@tanstack/react-start/server' {
 interface AppRouteRouteChildren {
   AppApplicationsRoute: typeof AppApplicationsRoute
   AppDashboardRoute: typeof AppDashboardRoute
+  AppApplicationIdRoute: typeof AppApplicationIdRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppApplicationsRoute: AppApplicationsRoute,
   AppDashboardRoute: AppDashboardRoute,
+  AppApplicationIdRoute: AppApplicationIdRoute,
 }
 
 const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(

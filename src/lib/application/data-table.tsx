@@ -7,6 +7,7 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/components/ui/table";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
 	ColumnDef,
 	ColumnFiltersState,
@@ -38,6 +39,8 @@ export function DataTable<TData, TValues>({
 			columnFilters,
 		},
 	});
+
+	const navigate = useNavigate();
 
 	return (
 		<div>
@@ -78,6 +81,13 @@ export function DataTable<TData, TValues>({
 									key={row.id}
 									data-state={row.getIsSelected() && "selected"}
 									className="transition-none"
+									onClick={() => {
+										const application = row.original;
+										navigate({
+											to: "/application/$id",
+											params: { id: application.id },
+										});
+									}}
 								>
 									{row.getVisibleCells().map((cell) => (
 										<TableCell key={cell.id}>

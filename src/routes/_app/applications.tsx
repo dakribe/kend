@@ -28,6 +28,7 @@ function RouteComponent() {
 
 	return (
 		<div className="max-w-[80%] mx-auto">
+			<p className="font-bold text-2xl">Applications</p>
 			<DataTable columns={columns} data={applications} />
 		</div>
 	);

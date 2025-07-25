@@ -32,3 +32,15 @@ export const getApplications = createServerFn()
 
 		return applications;
 	});
+
+export const getApplicationById = createServerFn()
+	.validator((id: string) => id)
+	.middleware([authMiddleware])
+	.handler(async ({ data }) => {
+		const id = data;
+		const application = await db.query.jobApplication.findFirst({
+			where: eq(jobApplicationTable.id, id),
+		});
+
+		return application;
+	});
