@@ -28,7 +28,7 @@ export const Route = createFileRoute("/_app")({
 
 function AppLayout() {
 	return (
-		<div>
+		<div className="max-w-[80%] mx-auto">
 			<div>
 				<Link to="/dashboard">Dashboard</Link>
 				<Link to="/applications">Applications</Link>
