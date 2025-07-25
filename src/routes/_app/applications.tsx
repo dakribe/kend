@@ -1,4 +1,6 @@
 import { getApplications } from "@/lib/application";
+import { columns } from "@/lib/application/columns";
+import { DataTable } from "@/lib/application/data-table";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 
@@ -25,13 +27,8 @@ function RouteComponent() {
 	});
 
 	return (
-		<div>
-			{applications.map((app) => (
-				<>
-					<p>Company: {app.company}</p>
-					<p>Title: {app.title}</p>
-				</>
-			))}
+		<div className="max-w-[80%] mx-auto">
+			<DataTable columns={columns} data={applications} />
 		</div>
 	);
 }
