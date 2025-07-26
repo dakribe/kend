@@ -8,6 +8,8 @@ import {
 } from "@tanstack/react-router";
 import appCss from "@/styles/app.css?url";
 import { QueryClient } from "@tanstack/react-query";
+import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
+import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 
 export const Route = createRootRouteWithContext<{
 	queryClient: QueryClient;
@@ -40,6 +42,8 @@ function RootComponent() {
 	return (
 		<RootDocument>
 			<Outlet />
+			<ReactQueryDevtools buttonPosition="bottom-right" />
+			<TanStackRouterDevtools position="bottom-left" />
 		</RootDocument>
 	);
 }
