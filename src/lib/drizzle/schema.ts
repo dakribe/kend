@@ -2,6 +2,7 @@ import {
 	pgTable,
 	text,
 	timestamp,
+	date,
 	boolean,
 	uuid,
 	varchar,
@@ -91,6 +92,9 @@ export const jobApplication = pgTable("job_application", {
 	id: uuid("id").defaultRandom().primaryKey(),
 	company: varchar("company", { length: 255 }).notNull(),
 	title: varchar("title", { length: 255 }).notNull(),
+	appliedDate: date("applied_date", { mode: "date" }).notNull(),
+	bookmarked: boolean("bookmarked").default(false).notNull(),
+	status: varchar("status").notNull(),
 
 	userId: text("user_id").references(() => user.id),
 });

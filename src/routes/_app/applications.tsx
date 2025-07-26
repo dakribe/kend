@@ -10,6 +10,7 @@ export const Route = createFileRoute("/_app/applications")({
 		const applications = await context.queryClient.ensureQueryData({
 			queryKey: ["applications"],
 			queryFn: getApplications,
+			staleTime: 1000 * 60 * 15,
 		});
 
 		return {

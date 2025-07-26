@@ -3,21 +3,24 @@ import { db } from "../drizzle";
 import { jobApplication as jobApplicationTable } from "../drizzle/schema";
 import { authMiddleware } from "../auth/middleware";
 import { eq } from "drizzle-orm";
+import z from "zod";
 
-interface CreateValues {
-	company: string;
-	title: string;
-}
+export const CreateApplicationSchema = z.object({
+	company: z.string(),
+	title: z.string(),
+	status: z.string(),
+	appliedDate: z.date(),
+});
 
 export const createApplication = createServerFn()
-	.validator((values: CreateValues) => values)
+	.validator(CreateApplicationSchema)
 	.middleware([authMiddleware])
 	.handler(async ({ context, data }) => {
 		const userId = context.user.id;
-		const { title, company } = data;
+		const { title, company, status, appliedDate } = data;
 		const [jobApplication] = await db
 			.insert(jobApplicationTable)
-			.values({ title, company, userId })
+			.values({ title, company, userId, status, appliedDate })
 			.returning();
 		return jobApplication;
 	});
