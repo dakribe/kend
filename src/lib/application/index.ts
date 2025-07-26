@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { db } from "../drizzle";
 import { jobApplication as jobApplicationTable } from "../drizzle/schema";
 import { authMiddleware } from "../auth/middleware";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import z from "zod";
 
 export const CreateApplicationSchema = z.object({
@@ -46,4 +46,28 @@ export const getApplicationById = createServerFn()
 		});
 
 		return application;
+	});
+
+export const bookmarkApplication = createServerFn()
+	.validator((id: string) => id)
+	.middleware([authMiddleware])
+	.handler(async ({ context, data }) => {
+		await db.update(jobApplicationTable).set({ bookmarked: true });
+	});
+
+export const getBookmarkedApplications = createServerFn()
+	.middleware([authMiddleware])
+	.handler(async ({ context }) => {
+		const userId = context.user.id;
+		const applications = await db
+			.select()
+			.from(jobApplicationTable)
+			.where(
+				and(
+					eq(jobApplicationTable.userId, userId!),
+					eq(jobApplicationTable.bookmarked, true),
+				),
+			);
+
+		return applications;
 	});

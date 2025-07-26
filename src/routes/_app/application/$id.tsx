@@ -1,5 +1,7 @@
+import { Button } from "@/components/ui/button";
 import { JobApplication } from "@/lib/drizzle/schema";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { ArrowLeft } from "lucide-react";
 
 export const Route = createFileRoute("/_app/application/$id")({
 	component: Application,
@@ -20,7 +22,12 @@ function Application() {
 
 	return (
 		<div>
-			<Link to={"/applications"}></Link>
+			<Link to="/applications">
+				<Button variant="ghost">
+					<ArrowLeft className="size-4" />
+					Back to Applications
+				</Button>
+			</Link>
 			<p>{application?.company}</p>
 			<p>{application?.title}</p>
 		</div>

@@ -21,17 +21,10 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "./ui/dialog";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { cn } from "@/lib/utils";
-import { CalendarIcon, Check, ChevronsUpDown, Command } from "lucide-react";
-import {
-	CommandEmpty,
-	CommandGroup,
-	CommandInput,
-	CommandItem,
-	CommandList,
-} from "./ui/command";
+import { CalendarIcon } from "lucide-react";
 import {
 	Select,
 	SelectContent,
@@ -42,21 +35,12 @@ import {
 import { Calendar } from "./ui/calendar";
 import { format } from "date-fns";
 
-const languages = [
-	{ label: "English", value: "en" },
-	{ label: "French", value: "fr" },
-	{ label: "German", value: "de" },
-	{ label: "Spanish", value: "es" },
-	{ label: "Portuguese", value: "pt" },
-	{ label: "Russian", value: "ru" },
-	{ label: "Japanese", value: "ja" },
-	{ label: "Korean", value: "ko" },
-	{ label: "Chinese", value: "zh" },
-] as const;
+interface DialogProps {
+	open: boolean;
+	setOpen: React.Dispatch<React.SetStateAction<boolean>>;
+}
 
-export function CreateDialog() {
-	const [open, setOpen] = useState(false);
-
+export function CreateDialog({ open, setOpen }: DialogProps) {
 	useEffect(() => {
 		const down = (e: KeyboardEvent) => {
 			if (
@@ -73,7 +57,7 @@ export function CreateDialog() {
 	}, []);
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
-			<DialogContent>
+			<DialogContent className="top-[20%] translate-y-[-20%]">
 				<DialogHeader>
 					<DialogTitle>Create Application</DialogTitle>
 					<DialogDescription>

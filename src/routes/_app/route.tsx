@@ -1,12 +1,9 @@
 import { CreateDialog } from "@/components/create-dialog";
+import { Navbar } from "@/components/navbar";
 import { Toaster } from "@/components/ui/sonner";
 import { getUser } from "@/lib/user/get-user";
-import {
-	createFileRoute,
-	Link,
-	Outlet,
-	redirect,
-} from "@tanstack/react-router";
+import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
+import { useState } from "react";
 
 export const Route = createFileRoute("/_app")({
 	component: AppLayout,
@@ -27,14 +24,13 @@ export const Route = createFileRoute("/_app")({
 });
 
 function AppLayout() {
+	const [openDialog, setOpenDialog] = useState(false);
+
 	return (
-		<div className="max-w-[80%] mx-auto">
-			<div>
-				<Link to="/dashboard">Dashboard</Link>
-				<Link to="/applications">Applications</Link>
-			</div>
+		<div className="max-w-[80%] mx-auto mt-8 min-h-dvh">
 			<Outlet />
-			<CreateDialog />
+			<Navbar setOpen={setOpenDialog} />
+			<CreateDialog open={openDialog} setOpen={setOpenDialog} />
 			<Toaster />
 		</div>
 	);
