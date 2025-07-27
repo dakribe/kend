@@ -57,7 +57,7 @@ export function CreateDialog({ open, setOpen }: DialogProps) {
 	}, []);
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
-			<DialogContent className="top-[20%] translate-y-[-20%]">
+			<DialogContent className="top-[20%] translate-y-[-20%] data-[state=open]:animate-none data-[state=closed]:animate-none">
 				<DialogHeader>
 					<DialogTitle>Create Application</DialogTitle>
 					<DialogDescription>
