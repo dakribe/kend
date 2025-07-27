@@ -10,7 +10,6 @@ export const Route = createFileRoute("/_app/applications")({
 		const applications = await context.queryClient.ensureQueryData({
 			queryKey: ["applications"],
 			queryFn: getApplications,
-			staleTime: 1000 * 60 * 15,
 		});
 
 		return {
@@ -25,12 +24,16 @@ function RouteComponent() {
 		queryKey: ["applications"],
 		queryFn: getApplications,
 		initialData: loaderApplications,
+		refetchOnWindowFocus: false,
+		refetchOnMount: false,
+		refetchOnReconnect: false,
+		staleTime: Infinity,
 	});
 
 	return (
-		<div className="max-w-[80%] mx-auto">
+		<>
 			<p className="font-bold text-2xl">Applications</p>
 			<DataTable columns={columns} data={applications} />
-		</div>
+		</>
 	);
 }

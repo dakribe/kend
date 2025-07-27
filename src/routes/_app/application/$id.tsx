@@ -1,5 +1,9 @@
 import { Button } from "@/components/ui/button";
+import { getApplicationById } from "@/lib/application";
+import { ToggleBookmark } from "@/lib/application/bookmark";
+import { DeleteApplication } from "@/lib/application/delete-application";
 import { JobApplication } from "@/lib/drizzle/schema";
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 
@@ -18,7 +22,22 @@ export const Route = createFileRoute("/_app/application/$id")({
 });
 
 function Application() {
-	const { application } = Route.useLoaderData();
+	const { application: cachedApplication } = Route.useLoaderData();
+	const { id } = Route.useParams();
+
+	const { data: application, isLoading } = useQuery({
+		queryKey: ["application", id],
+		queryFn: () => getApplicationById({ data: id }),
+		initialData: cachedApplication,
+	});
+
+	if (isLoading) {
+		return <div>Loading...</div>;
+	}
+
+	if (!application) {
+		return <div>Application not found</div>;
+	}
 
 	return (
 		<div>
@@ -28,7 +47,16 @@ function Application() {
 					Back to Applications
 				</Button>
 			</Link>
-			<p>{application?.company}</p>
+			<div className="flex justify-between pt-2">
+				<p className="font-bold text-3xl">{application?.company}</p>
+				<div className="flex gap-2">
+					<ToggleBookmark
+						id={application?.id}
+						bookmarked={application?.bookmarked}
+					/>
+					<DeleteApplication />
+				</div>
+			</div>
 			<p>{application?.title}</p>
 		</div>
 	);

@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { db } from "../drizzle";
 import { jobApplication as jobApplicationTable } from "../drizzle/schema";
 import { authMiddleware } from "../auth/middleware";
-import { and, eq } from "drizzle-orm";
+import { and, eq, not } from "drizzle-orm";
 import z from "zod";
 
 export const CreateApplicationSchema = z.object({
@@ -28,7 +28,7 @@ export const createApplication = createServerFn()
 export const getApplications = createServerFn()
 	.middleware([authMiddleware])
 	.handler(async ({ context }) => {
-		const userId = context.user.id!;
+		const userId = context.user.id;
 		const applications = await db.query.jobApplication.findMany({
 			where: eq(jobApplicationTable.userId, userId),
 		});
@@ -48,11 +48,29 @@ export const getApplicationById = createServerFn()
 		return application;
 	});
 
+export const deleteApplication = createServerFn()
+	.validator((id: string) => id)
+	.middleware([authMiddleware])
+	.handler(async ({ data, context }) => {
+		const userId = context.user.id;
+		await db
+			.delete(jobApplicationTable)
+			.where(
+				and(
+					eq(jobApplicationTable.id, data),
+					eq(jobApplicationTable.userId, userId),
+				),
+			);
+	});
+
 export const bookmarkApplication = createServerFn()
 	.validator((id: string) => id)
 	.middleware([authMiddleware])
-	.handler(async ({ context, data }) => {
-		await db.update(jobApplicationTable).set({ bookmarked: true });
+	.handler(async ({ data }) => {
+		await db
+			.update(jobApplicationTable)
+			.set({ bookmarked: not(jobApplicationTable.bookmarked) })
+			.where(eq(jobApplicationTable.id, data));
 	});
 
 export const getBookmarkedApplications = createServerFn()

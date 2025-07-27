@@ -27,7 +27,7 @@ function AppLayout() {
 	const [openDialog, setOpenDialog] = useState(false);
 
 	return (
-		<div className="max-w-[80%] mx-auto mt-8 min-h-dvh">
+		<div className="max-w-[80%] mx-auto pt-8 min-h-dvh overflow-hidden h-dvh">
 			<Outlet />
 			<Navbar setOpen={setOpenDialog} />
 			<CreateDialog open={openDialog} setOpen={setOpenDialog} />
