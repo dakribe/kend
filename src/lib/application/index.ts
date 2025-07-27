@@ -52,15 +52,10 @@ export const deleteApplication = createServerFn()
 	.validator((id: string) => id)
 	.middleware([authMiddleware])
 	.handler(async ({ data, context }) => {
-		const userId = context.user.id;
+		console.log("DATA:", data);
 		await db
 			.delete(jobApplicationTable)
-			.where(
-				and(
-					eq(jobApplicationTable.id, data),
-					eq(jobApplicationTable.userId, userId),
-				),
-			);
+			.where(eq(jobApplicationTable.id, data));
 	});
 
 export const bookmarkApplication = createServerFn()

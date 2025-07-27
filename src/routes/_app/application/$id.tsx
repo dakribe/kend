@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { getApplicationById } from "@/lib/application";
 import { ToggleBookmark } from "@/lib/application/bookmark";
-import { DeleteApplication } from "@/lib/application/delete-application";
+import { DeleteApplication } from "@/lib/application/delete";
 import { JobApplication } from "@/lib/drizzle/schema";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
@@ -54,7 +54,7 @@ function Application() {
 						id={application?.id}
 						bookmarked={application?.bookmarked}
 					/>
-					<DeleteApplication />
+					<DeleteApplication id={application.id} />
 				</div>
 			</div>
 			<p>{application?.title}</p>

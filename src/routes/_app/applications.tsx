@@ -27,7 +27,6 @@ function RouteComponent() {
 		refetchOnWindowFocus: false,
 		refetchOnMount: false,
 		refetchOnReconnect: false,
-		staleTime: Infinity,
 	});
 
 	return (
