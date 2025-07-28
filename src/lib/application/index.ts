@@ -51,8 +51,7 @@ export const getApplicationById = createServerFn()
 export const deleteApplication = createServerFn()
 	.validator((id: string) => id)
 	.middleware([authMiddleware])
-	.handler(async ({ data, context }) => {
-		console.log("DATA:", data);
+	.handler(async ({ data }) => {
 		await db
 			.delete(jobApplicationTable)
 			.where(eq(jobApplicationTable.id, data));

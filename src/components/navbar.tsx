@@ -1,6 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { never } from "better-auth";
-import { Bookmark, Home, List, LucideIcon, Plus, Settings } from "lucide-react";
+import { Home, List, LucideIcon, Plus } from "lucide-react";
 
 interface Props {
 	setOpen: React.Dispatch<React.SetStateAction<boolean>>;

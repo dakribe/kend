@@ -3,26 +3,33 @@ import { authClient } from "@/lib/auth/auth-client";
 import {
 	createFileRoute,
 	useLoaderData,
-	useRouter,
+	useNavigate,
 } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_app/dashboard")({
 	component: Dashboard,
+	head: () => ({
+		meta: [
+			{
+				title: "Dashboard | Kend",
+			},
+		],
+	}),
 });
 
 function Dashboard() {
 	const { user } = useLoaderData({ from: "/_app" });
-	const router = useRouter();
+	const navigate = useNavigate();
 
-	function handleSignOut() {
-		authClient.signOut();
-		router.navigate({ to: "/login" });
+	async function handleSignOut() {
+		await authClient.signOut();
+		navigate({ to: "/login" });
 	}
 
 	return (
-		<div>
+		<>
 			<p className="font-bold text-2xl">Hello, {user.name}</p>
 			<Button onClick={handleSignOut}>Sign Out</Button>
-		</div>
+		</>
 	);
 }
