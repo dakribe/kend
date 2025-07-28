@@ -7,22 +7,13 @@ export const Route = createFileRoute("/")({
 });
 
 function Home() {
-	const { data: session } = authClient.useSession();
-	if (session) {
-		return (
-			<div>
-				<h1>Welcome, {session.user?.name || session.user?.email}!</h1>
-				<Button onClick={() => authClient.signOut()}>Sign Out</Button>
-			</div>
-		);
-	}
-
 	return (
 		<div>
 			<Button
 				onClick={() =>
 					authClient.signIn.social({
 						provider: "google",
+						callbackURL: "/dashboard",
 					})
 				}
 			>
