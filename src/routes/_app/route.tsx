@@ -1,6 +1,8 @@
+import { CommandMenu } from "@/components/command-menu";
 import { CreateDialog } from "@/components/create-dialog";
 import { Navbar } from "@/components/navbar";
 import { Toaster } from "@/components/ui/sonner";
+import { getApplications } from "@/lib/application";
 import { getUser } from "@/lib/user/get-user";
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { useState } from "react";
@@ -17,13 +19,20 @@ export const Route = createFileRoute("/_app")({
 		if (!context.user.id) {
 			throw redirect({ to: "/login" });
 		}
+		const applications = await context.queryClient.ensureQueryData({
+			queryKey: ["applications"],
+			queryFn: getApplications,
+		});
+
 		return {
 			user: context.user,
+			applications,
 		};
 	},
 });
 
 function AppLayout() {
+	const { applications } = Route.useLoaderData();
 	const [openDialog, setOpenDialog] = useState(false);
 
 	return (
@@ -31,6 +40,7 @@ function AppLayout() {
 			<Outlet />
 			<Navbar setOpen={setOpenDialog} />
 			<CreateDialog open={openDialog} setOpen={setOpenDialog} />
+			<CommandMenu applications={applications} />
 			<Toaster />
 		</div>
 	);

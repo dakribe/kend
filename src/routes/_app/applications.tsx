@@ -2,24 +2,14 @@ import { getApplications } from "@/lib/application";
 import { columns } from "@/lib/application/columns";
 import { DataTable } from "@/lib/application/data-table";
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useLoaderData } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_app/applications")({
 	component: RouteComponent,
-	loader: async ({ context }) => {
-		const applications = await context.queryClient.ensureQueryData({
-			queryKey: ["applications"],
-			queryFn: getApplications,
-		});
-
-		return {
-			applications,
-		};
-	},
 });
 
 function RouteComponent() {
-	const { applications: loaderApplications } = Route.useLoaderData();
+	const { applications: loaderApplications } = useLoaderData({ from: "/_app" });
 	const { data: applications = loaderApplications } = useQuery({
 		queryKey: ["applications"],
 		queryFn: getApplications,
