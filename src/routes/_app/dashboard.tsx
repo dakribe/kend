@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { Stats } from "@/lib/application/stats";
 import { authClient } from "@/lib/auth/auth-client";
 import {
 	createFileRoute,
@@ -18,7 +19,7 @@ export const Route = createFileRoute("/_app/dashboard")({
 });
 
 function Dashboard() {
-	const { user } = useLoaderData({ from: "/_app" });
+	const { user, applications } = useLoaderData({ from: "/_app" });
 	const navigate = useNavigate();
 
 	async function handleSignOut() {
@@ -29,6 +30,7 @@ function Dashboard() {
 	return (
 		<>
 			<p className="font-bold text-2xl">Hello, {user.name}</p>
+			<Stats applications={applications} />
 			<Button onClick={handleSignOut}>Sign Out</Button>
 		</>
 	);
