@@ -8,8 +8,7 @@ import z from "zod";
 export const CreateApplicationSchema = z.object({
 	company: z.string(),
 	title: z.string(),
-	status: z.string(),
-	appliedDate: z.date(),
+	location: z.string(),
 });
 
 export const createApplication = createServerFn()
@@ -17,10 +16,10 @@ export const createApplication = createServerFn()
 	.middleware([authMiddleware])
 	.handler(async ({ context, data }) => {
 		const userId = context.user.id;
-		const { title, company, status, appliedDate } = data;
+		const { title, company, location } = data;
 		const [jobApplication] = await db
 			.insert(jobApplicationTable)
-			.values({ title, company, userId, status, appliedDate })
+			.values({ title, company, userId, location })
 			.returning();
 		return jobApplication;
 	});

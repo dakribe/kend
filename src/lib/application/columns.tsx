@@ -12,6 +12,10 @@ export const columns: ColumnDef<JobApplication>[] = [
 		header: "Title",
 	},
 	{
+		accessorKey: "location",
+		header: "Location",
+	},
+	{
 		accessorKey: "status",
 		header: "Status",
 	},

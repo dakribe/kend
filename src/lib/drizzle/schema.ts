@@ -92,9 +92,10 @@ export const jobApplication = pgTable("job_application", {
 	id: uuid("id").defaultRandom().primaryKey(),
 	company: varchar("company", { length: 255 }).notNull(),
 	title: varchar("title", { length: 255 }).notNull(),
-	appliedDate: date("applied_date", { mode: "date" }).notNull(),
+	appliedDate: date("applied_date", { mode: "date" }).defaultNow().notNull(),
 	bookmarked: boolean("bookmarked").default(false).notNull(),
-	status: varchar("status").notNull(),
+	status: varchar("status").default("applied").notNull(),
+	location: varchar("location").notNull(),
 
 	userId: text("user_id").references(() => user.id),
 });

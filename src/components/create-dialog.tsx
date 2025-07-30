@@ -22,18 +22,6 @@ import {
 	DialogTitle,
 } from "./ui/dialog";
 import { useEffect } from "react";
-import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
-import { cn } from "@/lib/utils";
-import { CalendarIcon } from "lucide-react";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "./ui/select";
-import { Calendar } from "./ui/calendar";
-import { format } from "date-fns";
 
 interface DialogProps {
 	open: boolean;
@@ -93,13 +81,13 @@ function CreateApplicationForm({ setOpen }: Props) {
 			data: {
 				title: values.title,
 				company: values.company,
-				status: values.status,
-				appliedDate: values.appliedDate,
+				location: values.location,
 			},
 		});
 		form.reset({
 			title: "",
 			company: "",
+			location: "",
 		});
 		setOpen(false);
 		toast("Application created!");
@@ -133,74 +121,18 @@ function CreateApplicationForm({ setOpen }: Props) {
 						</FormItem>
 					)}
 				/>
-				<div className="flex gap-4">
-					<FormField
-						control={form.control}
-						name="appliedDate"
-						render={({ field }) => (
-							<FormItem className="flex-1 flex flex-col">
-								<FormLabel>Date</FormLabel>
-								<Popover>
-									<PopoverTrigger asChild>
-										<FormControl>
-											<Button
-												variant={"outline"}
-												className={cn(
-													"w-[240px] pl-3 text-left font-normal",
-													!field.value && "text-muted-foreground",
-												)}
-											>
-												{field.value ? (
-													format(field.value, "PPP")
-												) : (
-													<span>Pick a date</span>
-												)}
-												<CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-											</Button>
-										</FormControl>
-									</PopoverTrigger>
-									<PopoverContent className="w-auto p-0" align="start">
-										<Calendar
-											mode="single"
-											selected={field.value}
-											onSelect={field.onChange}
-											disabled={(date) =>
-												date > new Date() || date < new Date("1900-01-01")
-											}
-											captionLayout="dropdown"
-										/>
-									</PopoverContent>
-								</Popover>
-								<FormMessage />
-							</FormItem>
-						)}
-					/>
-					<FormField
-						control={form.control}
-						name="status"
-						render={({ field }) => (
-							<FormItem className="flex-1">
-								<FormLabel>Status</FormLabel>
-								<Select
-									onValueChange={field.onChange}
-									defaultValue={field.value}
-								>
-									<FormControl>
-										<SelectTrigger className="w-full">
-											<SelectValue placeholder="Applied" />
-										</SelectTrigger>
-									</FormControl>
-									<SelectContent>
-										<SelectItem value="Applied">Applied</SelectItem>
-										<SelectItem value="Interviewing">Interviewing</SelectItem>
-										<SelectItem value="Rejected">Rejected</SelectItem>
-									</SelectContent>
-								</Select>
-								<FormMessage />
-							</FormItem>
-						)}
-					/>
-				</div>
+				<FormField
+					control={form.control}
+					name="location"
+					render={({ field }) => (
+						<FormItem>
+							<FormLabel>Location</FormLabel>
+							<FormControl>
+								<Input placeholder="Remote" {...field} />
+							</FormControl>
+						</FormItem>
+					)}
+				/>
 				<Button>Create</Button>
 			</form>
 		</Form>
