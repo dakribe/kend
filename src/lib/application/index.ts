@@ -103,6 +103,26 @@ export const updateJobApplicationCompany = createServerFn()
 		return updated;
 	});
 
+const updateTitleSchema = z.object({
+	title: z.string(),
+	applicationId: z.string(),
+});
+
+export const updateJobApplicationTitle = createServerFn()
+	.validator(updateTitleSchema)
+	.middleware([authMiddleware])
+	.handler(async ({ data }) => {
+		const { title, applicationId } = data;
+
+		const [updated] = await db
+			.update(jobApplicationTable)
+			.set({ title })
+			.where(eq(jobApplicationTable.id, applicationId))
+			.returning();
+
+		return updated;
+	});
+
 export const getCalendarData = createServerFn()
 	.middleware([authMiddleware])
 	.handler(async ({ context }) => {

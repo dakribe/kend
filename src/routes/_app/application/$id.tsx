@@ -1,5 +1,10 @@
 import { Button } from "@/components/ui/button";
-import { getApplicationById } from "@/lib/application";
+import { EditableInput } from "@/components/ui/editable-input";
+import {
+	getApplicationById,
+	updateJobApplicationCompany,
+	updateJobApplicationTitle,
+} from "@/lib/application";
 import { ToggleBookmark } from "@/lib/application/bookmark";
 import { DeleteApplication } from "@/lib/application/delete";
 import { JobApplication } from "@/lib/drizzle/schema";
@@ -48,7 +53,19 @@ function Application() {
 				</Button>
 			</Link>
 			<div className="flex justify-between pt-2">
-				<p className="font-bold text-3xl">{application?.company}</p>
+				<EditableInput
+					className="text-3xl font-bold"
+					id={application.id}
+					initialValue={application.company}
+					mutationFn={({ id, value }) =>
+						updateJobApplicationCompany({
+							data: {
+								applicationId: id,
+								company: value,
+							},
+						})
+					}
+				/>
 				<div className="flex gap-2">
 					<ToggleBookmark
 						id={application?.id}
@@ -57,7 +74,18 @@ function Application() {
 					<DeleteApplication id={application.id} />
 				</div>
 			</div>
-			<p>{application?.title}</p>
+			<EditableInput
+				id={application.id}
+				initialValue={application.title}
+				mutationFn={({ id, value }) =>
+					updateJobApplicationTitle({
+						data: {
+							applicationId: id,
+							title: value,
+						},
+					})
+				}
+			/>
 		</div>
 	);
 }
