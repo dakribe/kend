@@ -1,4 +1,6 @@
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Calendar } from "@/lib/application/calendar";
 import { Stats } from "@/lib/application/stats";
 import { authClient } from "@/lib/auth/auth-client";
 import {
@@ -31,6 +33,7 @@ function Dashboard() {
 		<>
 			<p className="font-bold text-2xl">Hello, {user.name}</p>
 			<Stats applications={applications} />
+			<Calendar />
 			<Button onClick={handleSignOut}>Sign Out</Button>
 		</>
 	);

@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { db } from "../drizzle";
 import { jobApplication as jobApplicationTable } from "../drizzle/schema";
 import { authMiddleware } from "../auth/middleware";
-import { and, eq, not } from "drizzle-orm";
+import { and, count, eq, not, sql } from "drizzle-orm";
 import z from "zod";
 
 export const CreateApplicationSchema = z.object({
@@ -81,4 +81,40 @@ export const getBookmarkedApplications = createServerFn()
 			);
 
 		return applications;
+	});
+
+const updateCompanySchema = z.object({
+	company: z.string(),
+	applicationId: z.string(),
+});
+
+export const updateJobApplicationCompany = createServerFn()
+	.validator(updateCompanySchema)
+	.middleware([authMiddleware])
+	.handler(async ({ data }) => {
+		const { company, applicationId } = data;
+
+		const [updated] = await db
+			.update(jobApplicationTable)
+			.set({ company })
+			.where(eq(jobApplicationTable.id, applicationId))
+			.returning();
+
+		return updated;
+	});
+
+export const getCalendarData = createServerFn()
+	.middleware([authMiddleware])
+	.handler(async ({ context }) => {
+		const userId = context.user.id;
+		const data = await db
+			.select({
+				day: sql<string>`DATE(${jobApplicationTable.appliedDate})`,
+				value: count(),
+			})
+			.from(jobApplicationTable)
+			.where(and(eq(jobApplicationTable.userId, userId)))
+			.groupBy(sql`DATE(${jobApplicationTable.appliedDate})`)
+			.orderBy(sql`DATE(${jobApplicationTable.appliedDate})`);
+		return data;
 	});
