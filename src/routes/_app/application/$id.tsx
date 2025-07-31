@@ -24,6 +24,13 @@ export const Route = createFileRoute("/_app/application/$id")({
 			application,
 		};
 	},
+	head: ({ loaderData }) => ({
+		meta: [
+			{
+				title: `${loaderData?.application?.company} | Kend`,
+			},
+		],
+	}),
 });
 
 function Application() {

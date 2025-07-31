@@ -6,6 +6,13 @@ import { createFileRoute, useLoaderData } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_app/applications")({
 	component: RouteComponent,
+	head: () => ({
+		meta: [
+			{
+				title: "Applications | Kend",
+			},
+		],
+	}),
 });
 
 function RouteComponent() {

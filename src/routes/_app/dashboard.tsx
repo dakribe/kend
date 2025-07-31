@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Calendar } from "@/lib/application/calendar";
 import { Stats } from "@/lib/application/stats";
 import { authClient } from "@/lib/auth/auth-client";
