@@ -2,6 +2,7 @@ import { CommandMenu } from "@/components/command-menu";
 import { CreateDialog } from "@/components/create-dialog";
 import { Navbar } from "@/components/navbar";
 import { Toaster } from "@/components/ui/sonner";
+import { useKeyboardShortcuts } from "@/hooks/keyboard-shortcut";
 import { getApplications } from "@/lib/application";
 import { getUser } from "@/lib/user/get-user";
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
@@ -34,6 +35,7 @@ export const Route = createFileRoute("/_app")({
 function AppLayout() {
 	const { applications } = Route.useLoaderData();
 	const [openDialog, setOpenDialog] = useState(false);
+	useKeyboardShortcuts();
 
 	return (
 		<div className="max-w-[80%] mx-auto pt-8 min-h-dvh overflow-hidden h-dvh">
