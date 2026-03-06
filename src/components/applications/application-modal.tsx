@@ -38,6 +38,7 @@ import { createApplication } from "#/lib/applications/server";
 import { useState } from "react";
 import { CalendarIcon } from "lucide-react";
 import { format } from "date-fns";
+import { useApplicationModal } from "#/lib/application-modal-context";
 
 const applicationFormSchema = z.object({
   companyName: z.string().min(1, "Company name is required"),
@@ -55,11 +56,15 @@ const applicationFormSchema = z.object({
 type ApplicationFormValues = z.infer<typeof applicationFormSchema>;
 
 interface ApplicationModalProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
-export function ApplicationModal({ open, onOpenChange }: ApplicationModalProps) {
+export function ApplicationModal({ open: propOpen, onOpenChange: propOnOpenChange }: ApplicationModalProps) {
+  const context = useApplicationModal();
+  const open = propOpen ?? context.isOpen;
+  const onOpenChange = propOnOpenChange ?? context.setOpen;
+  
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const form = useForm<ApplicationFormValues>({

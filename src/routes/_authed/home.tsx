@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
 import { Button } from "#/components/ui/button";
-import { ApplicationModal } from "#/components/applications/application-modal";
+import { useApplicationModal } from "#/lib/application-modal-context";
 
 export const Route = createFileRoute("/_authed/home")({
   component: RouteComponent,
@@ -9,7 +8,7 @@ export const Route = createFileRoute("/_authed/home")({
 
 function RouteComponent() {
   const { session } = Route.useRouteContext();
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const { openModal } = useApplicationModal();
 
   return (
     <div className="p-8">
@@ -18,10 +17,8 @@ function RouteComponent() {
           <h1 className="text-2xl font-bold">Welcome, {session.user.name}</h1>
           <p className="text-muted-foreground">{session.user.email}</p>
         </div>
-        <Button onClick={() => setIsModalOpen(true)}>New Application</Button>
+        <Button onClick={openModal}>New Application</Button>
       </div>
-
-      <ApplicationModal open={isModalOpen} onOpenChange={setIsModalOpen} />
     </div>
   );
 }
