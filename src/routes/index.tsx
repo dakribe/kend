@@ -1,8 +1,17 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { Button } from "#/components/ui/button";
 import { authClient } from "#/lib/auth/auth-client";
+import { getSession } from "#/lib/auth/get-session";
 
-export const Route = createFileRoute("/")({ component: App });
+export const Route = createFileRoute("/")({
+  async beforeLoad() {
+    const session = await getSession();
+    if (session?.user) {
+      throw redirect({ to: "/home" });
+    }
+  },
+  component: App,
+});
 
 function App() {
   return (
