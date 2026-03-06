@@ -1,12 +1,5 @@
 import { relations } from "drizzle-orm";
-import {
-  pgTable,
-  text,
-  timestamp,
-  boolean,
-  index,
-  pgEnum,
-} from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, boolean, index, pgEnum, uuid } from "drizzle-orm/pg-core";
 
 export const applicationStatusEnum = pgEnum("application_status", [
   "wishlist",
@@ -92,13 +85,14 @@ export const verification = pgTable(
 export const jobApplication = pgTable(
   "job_application",
   {
-    id: text("id").primaryKey(),
+    id: uuid("id").primaryKey().defaultRandom(),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     companyName: text("company_name").notNull(),
     jobTitle: text("job_title").notNull(),
     status: applicationStatusEnum("status").notNull().default("applied"),
+    platform: text("platform"),
     applicationDate: timestamp("application_date").defaultNow().notNull(),
     jobUrl: text("job_url"),
     location: text("location"),

@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthedHomeRouteImport } from './routes/_authed/home'
+import { Route as AuthedApplicationsRouteImport } from './routes/_authed/applications'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
 const AuthedRoute = AuthedRouteImport.update({
@@ -28,6 +29,11 @@ const AuthedHomeRoute = AuthedHomeRouteImport.update({
   path: '/home',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedApplicationsRoute = AuthedApplicationsRouteImport.update({
+  id: '/applications',
+  path: '/applications',
+  getParentRoute: () => AuthedRoute,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -36,11 +42,13 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/applications': typeof AuthedApplicationsRoute
   '/home': typeof AuthedHomeRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/applications': typeof AuthedApplicationsRoute
   '/home': typeof AuthedHomeRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
@@ -48,15 +56,22 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_authed': typeof AuthedRouteWithChildren
+  '/_authed/applications': typeof AuthedApplicationsRoute
   '/_authed/home': typeof AuthedHomeRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/home' | '/api/auth/$'
+  fullPaths: '/' | '/applications' | '/home' | '/api/auth/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/home' | '/api/auth/$'
-  id: '__root__' | '/' | '/_authed' | '/_authed/home' | '/api/auth/$'
+  to: '/' | '/applications' | '/home' | '/api/auth/$'
+  id:
+    | '__root__'
+    | '/'
+    | '/_authed'
+    | '/_authed/applications'
+    | '/_authed/home'
+    | '/api/auth/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -88,6 +103,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedHomeRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/applications': {
+      id: '/_authed/applications'
+      path: '/applications'
+      fullPath: '/applications'
+      preLoaderRoute: typeof AuthedApplicationsRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -99,10 +121,12 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthedRouteChildren {
+  AuthedApplicationsRoute: typeof AuthedApplicationsRoute
   AuthedHomeRoute: typeof AuthedHomeRoute
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
+  AuthedApplicationsRoute: AuthedApplicationsRoute,
   AuthedHomeRoute: AuthedHomeRoute,
 }
 
