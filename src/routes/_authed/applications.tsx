@@ -1,23 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useApplications } from "#/lib/applications/hooks";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_authed/applications")({
-  component: RouteComponent,
+  component: ApplicationsLayout,
 });
 
-function RouteComponent() {
-  const { data, isLoading } = useApplications();
-
-  if (isLoading) {
-    return <div>Loading...</div>;
-  }
-
+function ApplicationsLayout() {
   return (
-    <div>
-      <p>Applications</p>
-      {data?.map((application) => (
-        <p key={application.id}>{application.jobTitle}</p>
-      ))}
-    </div>
+    <Outlet />
   );
 }

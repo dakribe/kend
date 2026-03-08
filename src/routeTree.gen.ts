@@ -13,7 +13,9 @@ import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthedHomeRouteImport } from './routes/_authed/home'
 import { Route as AuthedApplicationsRouteImport } from './routes/_authed/applications'
+import { Route as AuthedApplicationsIndexRouteImport } from './routes/_authed/applications.index'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as AuthedApplicationsApplicationIdRouteImport } from './routes/_authed/applications.$applicationId'
 
 const AuthedRoute = AuthedRouteImport.update({
   id: '/_authed',
@@ -34,44 +36,73 @@ const AuthedApplicationsRoute = AuthedApplicationsRouteImport.update({
   path: '/applications',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedApplicationsIndexRoute = AuthedApplicationsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AuthedApplicationsRoute,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthedApplicationsApplicationIdRoute =
+  AuthedApplicationsApplicationIdRouteImport.update({
+    id: '/$applicationId',
+    path: '/$applicationId',
+    getParentRoute: () => AuthedApplicationsRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/applications': typeof AuthedApplicationsRoute
+  '/applications': typeof AuthedApplicationsRouteWithChildren
   '/home': typeof AuthedHomeRoute
+  '/applications/$applicationId': typeof AuthedApplicationsApplicationIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/applications/': typeof AuthedApplicationsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/applications': typeof AuthedApplicationsRoute
   '/home': typeof AuthedHomeRoute
+  '/applications/$applicationId': typeof AuthedApplicationsApplicationIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/applications': typeof AuthedApplicationsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_authed': typeof AuthedRouteWithChildren
-  '/_authed/applications': typeof AuthedApplicationsRoute
+  '/_authed/applications': typeof AuthedApplicationsRouteWithChildren
   '/_authed/home': typeof AuthedHomeRoute
+  '/_authed/applications/$applicationId': typeof AuthedApplicationsApplicationIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/_authed/applications/': typeof AuthedApplicationsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/applications' | '/home' | '/api/auth/$'
+  fullPaths:
+    | '/'
+    | '/applications'
+    | '/home'
+    | '/applications/$applicationId'
+    | '/api/auth/$'
+    | '/applications/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/applications' | '/home' | '/api/auth/$'
+  to:
+    | '/'
+    | '/home'
+    | '/applications/$applicationId'
+    | '/api/auth/$'
+    | '/applications'
   id:
     | '__root__'
     | '/'
     | '/_authed'
     | '/_authed/applications'
     | '/_authed/home'
+    | '/_authed/applications/$applicationId'
     | '/api/auth/$'
+    | '/_authed/applications/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -110,6 +141,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedApplicationsRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/applications/': {
+      id: '/_authed/applications/'
+      path: '/'
+      fullPath: '/applications/'
+      preLoaderRoute: typeof AuthedApplicationsIndexRouteImport
+      parentRoute: typeof AuthedApplicationsRoute
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -117,16 +155,36 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authed/applications/$applicationId': {
+      id: '/_authed/applications/$applicationId'
+      path: '/$applicationId'
+      fullPath: '/applications/$applicationId'
+      preLoaderRoute: typeof AuthedApplicationsApplicationIdRouteImport
+      parentRoute: typeof AuthedApplicationsRoute
+    }
   }
 }
 
+interface AuthedApplicationsRouteChildren {
+  AuthedApplicationsApplicationIdRoute: typeof AuthedApplicationsApplicationIdRoute
+  AuthedApplicationsIndexRoute: typeof AuthedApplicationsIndexRoute
+}
+
+const AuthedApplicationsRouteChildren: AuthedApplicationsRouteChildren = {
+  AuthedApplicationsApplicationIdRoute: AuthedApplicationsApplicationIdRoute,
+  AuthedApplicationsIndexRoute: AuthedApplicationsIndexRoute,
+}
+
+const AuthedApplicationsRouteWithChildren =
+  AuthedApplicationsRoute._addFileChildren(AuthedApplicationsRouteChildren)
+
 interface AuthedRouteChildren {
-  AuthedApplicationsRoute: typeof AuthedApplicationsRoute
+  AuthedApplicationsRoute: typeof AuthedApplicationsRouteWithChildren
   AuthedHomeRoute: typeof AuthedHomeRoute
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
-  AuthedApplicationsRoute: AuthedApplicationsRoute,
+  AuthedApplicationsRoute: AuthedApplicationsRouteWithChildren,
   AuthedHomeRoute: AuthedHomeRoute,
 }
 

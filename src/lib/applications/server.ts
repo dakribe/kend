@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { db } from "../db";
 import { jobApplication } from "../schema";
 import authMiddleware from "../auth/auth-middleware";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
 export const getApplications = createServerFn({ method: "GET" })
@@ -16,6 +16,25 @@ export const getApplications = createServerFn({ method: "GET" })
       .where(eq(jobApplication.userId, session.user.id));
 
     return applications;
+  });
+
+const getApplicationByIdSchema = z.object({
+  id: z.string().uuid(),
+});
+
+export const getApplicationById = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .inputValidator(getApplicationByIdSchema)
+  .handler(async ({ context, data }) => {
+    const { session } = context;
+
+    const [application] = await db
+      .select()
+      .from(jobApplication)
+      .where(and(eq(jobApplication.id, data.id), eq(jobApplication.userId, session.user.id)))
+      .limit(1);
+
+    return application ?? null;
   });
 
 const createApplicationSchema = z.object({
