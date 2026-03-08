@@ -1,4 +1,4 @@
-import { createFileRoute, redirect, Outlet } from "@tanstack/react-router";
+import { createFileRoute, redirect, Outlet, Link, useLocation } from "@tanstack/react-router";
 import { getSession } from "#/lib/auth/get-session";
 import { ApplicationModalProvider } from "#/lib/application-modal-context";
 import { ApplicationModal } from "#/components/applications/application-modal";
@@ -31,6 +31,8 @@ function AuthedLayout() {
 
 function AuthedLayoutInner() {
   const { setOpen } = useApplicationModal();
+  const location = useLocation();
+  
   async function handleLogout() {
     await authClient.signOut();
     window.location.href = "/";
@@ -52,7 +54,24 @@ function AuthedLayoutInner() {
     <>
       <div className="min-h-screen bg-background">
         <header className="border-b px-6 py-3 flex items-center justify-between">
-          <div className="font-semibold">Kend</div>
+          <div className="flex items-center gap-6">
+            <Link
+              to="/home"
+              className={`text-sm hover:text-foreground ${
+                location.pathname === "/home" ? "text-foreground font-medium" : "text-muted-foreground"
+              }`}
+            >
+              Overview
+            </Link>
+            <Link
+              to="/applications"
+              className={`text-sm hover:text-foreground ${
+                location.pathname === "/applications" ? "text-foreground font-medium" : "text-muted-foreground"
+              }`}
+            >
+              Applications
+            </Link>
+          </div>
           <div className="flex items-center gap-2">
             <Button
               type="button"
