@@ -50,6 +50,24 @@ const createApplicationSchema = z.object({
   notes: z.string().optional(),
 });
 
+const deleteApplicationSchema = z.object({
+  id: z.string().uuid(),
+});
+
+export const deleteApplication = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .inputValidator(deleteApplicationSchema)
+  .handler(async ({ context, data }) => {
+    const { session } = context;
+
+    const [deleted] = await db
+      .delete(jobApplication)
+      .where(and(eq(jobApplication.id, data.id), eq(jobApplication.userId, session.user.id)))
+      .returning();
+
+    return deleted ?? null;
+  });
+
 export const createApplication = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .inputValidator(createApplicationSchema)
