@@ -1,11 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getApplications, createApplication, getApplicationById, deleteApplication } from "./server";
+import { getApplications, createApplication, getApplicationById, deleteApplication, getApplicationStats } from "./server";
 import { useRouter } from "@tanstack/react-router";
 
 export function useApplications() {
   return useQuery({
     queryKey: ["applications"],
     queryFn: getApplications,
+  });
+}
+
+export function useApplicationStats() {
+  return useQuery({
+    queryKey: ["application-stats"],
+    queryFn: getApplicationStats,
   });
 }
 

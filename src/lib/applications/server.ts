@@ -18,6 +18,48 @@ export const getApplications = createServerFn({ method: "GET" })
     return applications;
   });
 
+export const getApplicationStats = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(async ({ context }) => {
+    const { session } = context;
+
+    const applications = await db
+      .select()
+      .from(jobApplication)
+      .where(eq(jobApplication.userId, session.user.id));
+
+    const byStatus = {
+      wishlist: 0,
+      applied: 0,
+      interviewing: 0,
+      offered: 0,
+      rejected: 0,
+      withdrawn: 0,
+    };
+
+    applications.forEach((app) => {
+      if (app.status in byStatus) {
+        byStatus[app.status as keyof typeof byStatus]++;
+      }
+    });
+
+    const recent = applications
+      .sort((a, b) => new Date(b.applicationDate).getTime() - new Date(a.applicationDate).getTime())
+      .slice(0, 5);
+
+    return {
+      total: applications.length,
+      byStatus,
+      recent: recent.map((app) => ({
+        id: app.id,
+        companyName: app.companyName,
+        jobTitle: app.jobTitle,
+        status: app.status,
+        applicationDate: app.applicationDate,
+      })),
+    };
+  });
+
 const getApplicationByIdSchema = z.object({
   id: z.string().uuid(),
 });
