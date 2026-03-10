@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useApplication, useDeleteApplication } from "#/lib/applications/hooks";
-import { ArrowLeftIcon, CalendarIcon, MapPinIcon, BanknoteIcon, FileTextIcon, ExternalLinkIcon, StickyNoteIcon, Trash2Icon } from "lucide-react";
+import { useApplication, useDeleteApplication, useUpdateApplication } from "#/lib/applications/hooks";
+import { ArrowLeftIcon, CalendarIcon, MapPinIcon, BanknoteIcon, FileTextIcon, ExternalLinkIcon, StickyNoteIcon, Trash2Icon, PencilIcon } from "lucide-react";
 import { useState } from "react";
 import { Button } from "#/components/ui/button";
 import {
@@ -12,6 +12,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "#/components/ui/dialog";
+import { ApplicationModal } from "#/components/applications/application-modal";
 
 export const Route = createFileRoute("/_authed/applications/$applicationId")({
   component: RouteComponent,
@@ -30,7 +31,9 @@ function RouteComponent() {
   const { applicationId } = Route.useParams();
   const { data: application, isLoading } = useApplication(applicationId);
   const deleteMutation = useDeleteApplication();
+  const updateMutation = useUpdateApplication();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
 
   if (isLoading) {
     return (
@@ -82,11 +85,17 @@ function RouteComponent() {
             <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-foreground leading-tight">
               {application.jobTitle}
             </h1>
-            <span
-              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${status.bg} ${status.text} ${status.border}`}
-            >
-              {status.label}
-            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setEditDialogOpen(true)}>
+                <PencilIcon className="w-4 h-4 mr-2" />
+                Edit
+              </Button>
+              <span
+                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${status.bg} ${status.text} ${status.border}`}
+              >
+                {status.label}
+              </span>
+            </div>
           </div>
           <p className="text-lg text-muted-foreground font-light">
             {application.companyName}
@@ -173,6 +182,25 @@ function RouteComponent() {
             </DialogContent>
           </Dialog>
         </footer>
+
+        <ApplicationModal
+          open={editDialogOpen}
+          onOpenChange={setEditDialogOpen}
+          applicationId={applicationId}
+          updateMutation={updateMutation}
+          defaultValues={{
+            companyName: application.companyName,
+            jobTitle: application.jobTitle,
+            status: application.status,
+            platform: application.platform ?? "",
+            applicationDate: application.applicationDate ? new Date(application.applicationDate) : undefined,
+            jobUrl: application.jobUrl ?? "",
+            location: application.location ?? "",
+            salaryRange: application.salaryRange ?? "",
+            resumeVersion: application.resumeVersion ?? "",
+            notes: application.notes ?? "",
+          }}
+        />
       </div>
     </div>
   );

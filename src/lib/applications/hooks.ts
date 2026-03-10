@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getApplications, createApplication, getApplicationById, deleteApplication, getApplicationStats } from "./server";
+import { getApplications, createApplication, getApplicationById, deleteApplication, getApplicationStats, updateApplication } from "./server";
 import { useRouter } from "@tanstack/react-router";
 
 export function useApplications() {
@@ -43,6 +43,32 @@ export function useDeleteApplication() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["applications"] });
       router.navigate({ to: "/applications" });
+    },
+  });
+}
+
+export function useUpdateApplication() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (data: { id: string; [key: string]: unknown }) => updateApplication({ data }),
+    onMutate: async (newData) => {
+      await queryClient.cancelQueries({ queryKey: ["applications", newData.id] });
+      const previousData = queryClient.getQueryData(["applications", newData.id]);
+
+      queryClient.setQueryData(["applications", newData.id], (old: unknown) => {
+        if (!old) return old;
+        return { ...old, ...newData };
+      });
+
+      return { previousData };
+    },
+    onError: (_err, newData, context) => {
+      queryClient.setQueryData(["applications", newData.id], context?.previousData);
+    },
+    onSettled: (_, __, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["applications"] });
+      queryClient.invalidateQueries({ queryKey: ["applications", variables.id] });
     },
   });
 }

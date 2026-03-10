@@ -96,6 +96,20 @@ const deleteApplicationSchema = z.object({
   id: z.string().uuid(),
 });
 
+const updateApplicationSchema = z.object({
+  id: z.string().uuid(),
+  companyName: z.string().min(1).optional(),
+  jobTitle: z.string().min(1).optional(),
+  status: z.enum(["wishlist", "applied", "interviewing", "offered", "rejected", "withdrawn"]).optional(),
+  platform: z.string().optional(),
+  applicationDate: z.date().optional(),
+  jobUrl: z.string().url("Invalid URL").optional().or(z.literal("")),
+  location: z.string().optional(),
+  salaryRange: z.string().optional(),
+  resumeVersion: z.string().optional(),
+  notes: z.string().optional(),
+});
+
 export const deleteApplication = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .inputValidator(deleteApplicationSchema)
@@ -108,6 +122,25 @@ export const deleteApplication = createServerFn({ method: "POST" })
       .returning();
 
     return deleted ?? null;
+  });
+
+export const updateApplication = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .inputValidator(updateApplicationSchema)
+  .handler(async ({ context, data }) => {
+    const { session } = context;
+    const { id, ...updates } = data;
+
+    const [updated] = await db
+      .update(jobApplication)
+      .set({
+        ...updates,
+        jobUrl: updates.jobUrl || null,
+      })
+      .where(and(eq(jobApplication.id, id), eq(jobApplication.userId, session.user.id)))
+      .returning();
+
+    return updated ?? null;
   });
 
 export const createApplication = createServerFn({ method: "POST" })

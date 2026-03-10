@@ -1,6 +1,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import type { UseMutationResult } from "@tanstack/react-query";
 
 import { Button } from "#/components/ui/button";
 import {
@@ -34,7 +35,7 @@ import {
   PopoverTrigger,
 } from "#/components/ui/popover";
 import { cn } from "#/lib/utils";
-import { createApplication } from "#/lib/applications/server";
+import { createApplication, updateApplication } from "#/lib/applications/server";
 import { useState } from "react";
 import { CalendarIcon } from "lucide-react";
 import { format } from "date-fns";
@@ -58,12 +59,16 @@ type ApplicationFormValues = z.infer<typeof applicationFormSchema>;
 interface ApplicationModalProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  applicationId?: string;
+  defaultValues?: Partial<ApplicationFormValues>;
+  updateMutation?: UseMutationResult<unknown, Error, { id: string; [key: string]: unknown }, unknown>;
 }
 
-export function ApplicationModal({ open: propOpen, onOpenChange: propOnOpenChange }: ApplicationModalProps) {
+export function ApplicationModal({ open: propOpen, onOpenChange: propOnOpenChange, applicationId, defaultValues, updateMutation }: ApplicationModalProps) {
   const context = useApplicationModal();
   const open = propOpen ?? context.isOpen;
   const onOpenChange = propOnOpenChange ?? context.setOpen;
+  const isEditMode = !!applicationId;
   
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -79,22 +84,39 @@ export function ApplicationModal({ open: propOpen, onOpenChange: propOnOpenChang
       salaryRange: "",
       resumeVersion: "",
       notes: "",
+      ...defaultValues,
     },
   });
 
   async function onSubmit(data: ApplicationFormValues) {
     setIsSubmitting(true);
     try {
-      await createApplication({
-        data: {
-          ...data,
-          status: data.status ?? "applied",
-        },
-      });
-      form.reset();
+      if (isEditMode && applicationId) {
+        if (updateMutation) {
+          await updateMutation.mutateAsync({
+            id: applicationId,
+            ...data,
+          });
+        } else {
+          await updateApplication({
+            data: {
+              id: applicationId,
+              ...data,
+            },
+          });
+        }
+      } else {
+        await createApplication({
+          data: {
+            ...data,
+            status: data.status ?? "applied",
+          },
+        });
+        form.reset();
+      }
       onOpenChange(false);
     } catch (error) {
-      console.error("Failed to create application:", error);
+      console.error("Failed to save application:", error);
     } finally {
       setIsSubmitting(false);
     }
@@ -104,9 +126,9 @@ export function ApplicationModal({ open: propOpen, onOpenChange: propOnOpenChang
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>New Job Application</DialogTitle>
+          <DialogTitle>{isEditMode ? "Edit Application" : "New Job Application"}</DialogTitle>
           <DialogDescription>
-            Add a new job application to track your job search.
+            {isEditMode ? "Update your job application details." : "Add a new job application to track your job search."}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -309,7 +331,7 @@ export function ApplicationModal({ open: propOpen, onOpenChange: propOnOpenChang
                 Cancel
               </Button>
               <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? "Creating..." : "Create Application"}
+                {isSubmitting ? (isEditMode ? "Updating..." : "Creating...") : (isEditMode ? "Update Application" : "Create Application")}
               </Button>
             </div>
           </form>
