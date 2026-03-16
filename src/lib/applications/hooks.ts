@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getApplications, createApplication, getApplicationById, deleteApplication, getApplicationStats, updateApplication } from "./server";
+import { getApplications, createApplication, getApplicationById, deleteApplication, getApplicationStats, updateApplication, getApplicationEvents } from "./server";
 import { useRouter } from "@tanstack/react-router";
 
 export function useApplications() {
@@ -70,5 +70,12 @@ export function useUpdateApplication() {
       queryClient.invalidateQueries({ queryKey: ["applications"] });
       queryClient.invalidateQueries({ queryKey: ["applications", variables.id] });
     },
+  });
+}
+
+export function useApplicationEvents() {
+  return useQuery({
+    queryKey: ["application-events"],
+    queryFn: getApplicationEvents,
   });
 }

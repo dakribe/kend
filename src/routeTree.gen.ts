@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthedTimelineRouteImport } from './routes/_authed/timeline'
 import { Route as AuthedHomeRouteImport } from './routes/_authed/home'
 import { Route as AuthedApplicationsRouteImport } from './routes/_authed/applications'
 import { Route as AuthedApplicationsIndexRouteImport } from './routes/_authed/applications.index'
@@ -25,6 +26,11 @@ const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AuthedTimelineRoute = AuthedTimelineRouteImport.update({
+  id: '/timeline',
+  path: '/timeline',
+  getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedHomeRoute = AuthedHomeRouteImport.update({
   id: '/home',
@@ -57,6 +63,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/applications': typeof AuthedApplicationsRouteWithChildren
   '/home': typeof AuthedHomeRoute
+  '/timeline': typeof AuthedTimelineRoute
   '/applications/$applicationId': typeof AuthedApplicationsApplicationIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/applications/': typeof AuthedApplicationsIndexRoute
@@ -64,6 +71,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/home': typeof AuthedHomeRoute
+  '/timeline': typeof AuthedTimelineRoute
   '/applications/$applicationId': typeof AuthedApplicationsApplicationIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/applications': typeof AuthedApplicationsIndexRoute
@@ -74,6 +82,7 @@ export interface FileRoutesById {
   '/_authed': typeof AuthedRouteWithChildren
   '/_authed/applications': typeof AuthedApplicationsRouteWithChildren
   '/_authed/home': typeof AuthedHomeRoute
+  '/_authed/timeline': typeof AuthedTimelineRoute
   '/_authed/applications/$applicationId': typeof AuthedApplicationsApplicationIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/_authed/applications/': typeof AuthedApplicationsIndexRoute
@@ -84,6 +93,7 @@ export interface FileRouteTypes {
     | '/'
     | '/applications'
     | '/home'
+    | '/timeline'
     | '/applications/$applicationId'
     | '/api/auth/$'
     | '/applications/'
@@ -91,6 +101,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/home'
+    | '/timeline'
     | '/applications/$applicationId'
     | '/api/auth/$'
     | '/applications'
@@ -100,6 +111,7 @@ export interface FileRouteTypes {
     | '/_authed'
     | '/_authed/applications'
     | '/_authed/home'
+    | '/_authed/timeline'
     | '/_authed/applications/$applicationId'
     | '/api/auth/$'
     | '/_authed/applications/'
@@ -126,6 +138,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_authed/timeline': {
+      id: '/_authed/timeline'
+      path: '/timeline'
+      fullPath: '/timeline'
+      preLoaderRoute: typeof AuthedTimelineRouteImport
+      parentRoute: typeof AuthedRoute
     }
     '/_authed/home': {
       id: '/_authed/home'
@@ -181,11 +200,13 @@ const AuthedApplicationsRouteWithChildren =
 interface AuthedRouteChildren {
   AuthedApplicationsRoute: typeof AuthedApplicationsRouteWithChildren
   AuthedHomeRoute: typeof AuthedHomeRoute
+  AuthedTimelineRoute: typeof AuthedTimelineRoute
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedApplicationsRoute: AuthedApplicationsRouteWithChildren,
   AuthedHomeRoute: AuthedHomeRoute,
+  AuthedTimelineRoute: AuthedTimelineRoute,
 }
 
 const AuthedRouteWithChildren =

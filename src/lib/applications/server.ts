@@ -1,8 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { db } from "../db";
-import { jobApplication } from "../schema";
+import { jobApplication, applicationEvent } from "../schema";
 import authMiddleware from "../auth/auth-middleware";
-import { and, eq } from "drizzle-orm";
+import { and, eq, desc } from "drizzle-orm";
 import { z } from "zod";
 
 export const getApplications = createServerFn({ method: "GET" })
@@ -131,6 +131,16 @@ export const updateApplication = createServerFn({ method: "POST" })
     const { session } = context;
     const { id, ...updates } = data;
 
+    const [existing] = await db
+      .select()
+      .from(jobApplication)
+      .where(and(eq(jobApplication.id, id), eq(jobApplication.userId, session.user.id)))
+      .limit(1);
+
+    if (!existing) {
+      return null;
+    }
+
     const [updated] = await db
       .update(jobApplication)
       .set({
@@ -140,7 +150,15 @@ export const updateApplication = createServerFn({ method: "POST" })
       .where(and(eq(jobApplication.id, id), eq(jobApplication.userId, session.user.id)))
       .returning();
 
-    return updated ?? null;
+    if (updates.status && updates.status !== existing.status) {
+      await db.insert(applicationEvent).values({
+        applicationId: id,
+        previousStatus: existing.status,
+        newStatus: updates.status,
+      });
+    }
+
+    return updated;
   });
 
 export const createApplication = createServerFn({ method: "POST" })
@@ -166,5 +184,34 @@ export const createApplication = createServerFn({ method: "POST" })
       })
       .returning();
 
+    await db.insert(applicationEvent).values({
+      applicationId: created.id,
+      previousStatus: null,
+      newStatus: created.status,
+    });
+
     return created;
+  });
+
+export const getApplicationEvents = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(async ({ context }) => {
+    const { session } = context;
+
+    const events = await db
+      .select({
+        id: applicationEvent.id,
+        applicationId: applicationEvent.applicationId,
+        previousStatus: applicationEvent.previousStatus,
+        newStatus: applicationEvent.newStatus,
+        createdAt: applicationEvent.createdAt,
+        companyName: jobApplication.companyName,
+        jobTitle: jobApplication.jobTitle,
+      })
+      .from(applicationEvent)
+      .innerJoin(jobApplication, eq(applicationEvent.applicationId, jobApplication.id))
+      .where(eq(jobApplication.userId, session.user.id))
+      .orderBy(desc(applicationEvent.createdAt));
+
+    return events;
   });

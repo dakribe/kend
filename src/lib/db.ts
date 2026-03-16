@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { account, session, user, verification, jobApplication } from "./schema";
+import { account, session, user, verification, jobApplication, applicationEvent } from "./schema";
 
 const schema = {
   user,
@@ -8,6 +8,7 @@ const schema = {
   account,
   verification,
   jobApplication,
+  applicationEvent,
 };
 
 const client = postgres(process.env.DATABASE_URL!);

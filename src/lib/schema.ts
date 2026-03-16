@@ -108,6 +108,20 @@ export const jobApplication = pgTable(
   (table) => [index("job_application_userId_idx").on(table.userId)],
 );
 
+export const applicationEvent = pgTable(
+  "application_event",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    applicationId: uuid("application_id")
+      .notNull()
+      .references(() => jobApplication.id, { onDelete: "cascade" }),
+    previousStatus: applicationStatusEnum("previous_status"),
+    newStatus: applicationStatusEnum("new_status").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("application_event_applicationId_idx").on(table.applicationId)],
+);
+
 export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   accounts: many(account),
@@ -128,9 +142,17 @@ export const accountRelations = relations(account, ({ one }) => ({
   }),
 }));
 
-export const jobApplicationRelations = relations(jobApplication, ({ one }) => ({
+export const jobApplicationRelations = relations(jobApplication, ({ one, many }) => ({
   user: one(user, {
     fields: [jobApplication.userId],
     references: [user.id],
+  }),
+  events: many(applicationEvent),
+}));
+
+export const applicationEventRelations = relations(applicationEvent, ({ one }) => ({
+  application: one(jobApplication, {
+    fields: [applicationEvent.applicationId],
+    references: [jobApplication.id],
   }),
 }));

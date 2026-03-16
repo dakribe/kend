@@ -71,6 +71,14 @@ function AuthedLayoutInner() {
             >
               Applications
             </Link>
+            <Link
+              to="/timeline"
+              className={`text-sm hover:text-foreground ${
+                location.pathname === "/timeline" ? "text-foreground font-medium" : "text-muted-foreground"
+              }`}
+            >
+              Timeline
+            </Link>
           </div>
           <div className="flex items-center gap-2">
             <Button
