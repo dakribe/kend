@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useApplication, useDeleteApplication, useUpdateApplication } from "#/lib/applications/hooks";
-import { ArrowLeftIcon, CalendarIcon, MapPinIcon, BanknoteIcon, FileTextIcon, ExternalLinkIcon, StickyNoteIcon, Trash2Icon, PencilIcon } from "lucide-react";
-import { useState } from "react";
+import { ArrowLeftIcon, MapPinIcon, FileTextIcon, ExternalLinkIcon, Trash2Icon, PencilIcon } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Button } from "#/components/ui/button";
 import {
   Dialog,
@@ -34,6 +34,22 @@ function RouteComponent() {
   const updateMutation = useUpdateApplication();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
+        return;
+      }
+      if (e.key === "d") {
+        e.preventDefault();
+        setDeleteDialogOpen(true);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   if (isLoading) {
     return (
@@ -112,52 +128,57 @@ function RouteComponent() {
         </header>
 
         <div className="grid md:grid-cols-2 gap-6">
-          <SectionCard title="Application" icon={CalendarIcon}>
-            <DetailItem label="Applied on" value={formatDate(application.applicationDate)} />
-            {application.platform && <DetailItem label="Platform" value={application.platform} />}
-            {application.resumeVersion && <DetailItem label="Resume" value={application.resumeVersion} />}
-          </SectionCard>
-
-          <SectionCard title="Compensation" icon={BanknoteIcon}>
+          <SectionCard title="Details">
+            <DetailItem label="Applied" value={formatDate(application.applicationDate)} />
+            {application.platform && <DetailItem label="Applied via" value={application.platform} />}
+            {application.resumeVersion && <DetailItem label="Resume version" value={application.resumeVersion} />}
             {application.salaryRange ? (
               <DetailItem label="Salary range" value={application.salaryRange} />
             ) : (
-              <p className="text-sm text-muted-foreground italic">Not specified</p>
+              <div className="grid gap-0.5">
+                <p className="text-xs text-muted-foreground">Salary range</p>
+                <p className="text-sm text-muted-foreground">Not specified</p>
+              </div>
             )}
           </SectionCard>
         </div>
 
         {application.jobUrl && (
-          <SectionCard title="Job Posting" icon={ExternalLinkIcon} className="mt-6">
+          <div className="mt-6">
+            <p className="text-xs text-muted-foreground mb-2">Job Posting</p>
             <a
               href={application.jobUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-2 text-primary hover:underline break-all font-mono text-sm"
+              className="inline-flex items-center gap-2 text-sm text-primary hover:underline break-all"
             >
               {new URL(application.jobUrl).hostname}
               <ExternalLinkIcon className="w-3 h-3" />
             </a>
-          </SectionCard>
+          </div>
         )}
 
         {application.notes && (
-          <SectionCard title="Notes" icon={StickyNoteIcon} className="mt-6">
+          <div className="mt-6 p-4 bg-muted/30 rounded-lg">
+            <p className="text-xs text-muted-foreground mb-2">Notes</p>
             <p className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90">
               {application.notes}
             </p>
-          </SectionCard>
+          </div>
         )}
 
-        <footer className="mt-12 pt-6 border-t flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">
-            Application ID: <span className="font-mono">{application.id}</span>
+        <footer className="mt-12 pt-6 border-t border-border/50 flex items-center justify-between">
+          <p className="text-xs text-muted-foreground/60">
+            ID: <span className="font-mono text-muted-foreground/80">{application.id}</span>
           </p>
           <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
             <DialogTrigger asChild>
-              <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive">
-                <Trash2Icon className="w-4 h-4 mr-2" />
-                Delete
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground/60 hover:text-destructive h-8 px-2"
+              >
+                <Trash2Icon className="w-3.5 h-3.5" />
               </Button>
             </DialogTrigger>
             <DialogContent>
@@ -213,14 +234,14 @@ function SectionCard({
   className = "",
 }: {
   title: string;
-  icon: React.ElementType;
+  icon?: React.ElementType;
   children: React.ReactNode;
   className?: string;
 }) {
   return (
     <div className={`bg-card border rounded-xl p-5 ${className}`}>
       <div className="flex items-center gap-2 mb-4">
-        <Icon className="w-4 h-4 text-muted-foreground" />
+        {Icon && <Icon className="w-4 h-4 text-muted-foreground" />}
         <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
           {title}
         </h2>
