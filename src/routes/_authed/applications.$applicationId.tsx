@@ -152,7 +152,13 @@ function RouteComponent() {
               rel="noreferrer"
               className="inline-flex items-center gap-2 text-sm text-primary hover:underline break-all"
             >
-              {new URL(application.jobUrl).hostname}
+              {(() => {
+                try {
+                  return new URL(application.jobUrl).hostname;
+                } catch {
+                  return application.jobUrl;
+                }
+              })()}
               <ExternalLinkIcon className="w-3 h-3" />
             </a>
           </div>
