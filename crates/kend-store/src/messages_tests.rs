@@ -215,3 +215,22 @@ fn marking_read_and_unread_updates_the_row_and_the_counts() {
     assert_eq!(store.unread_count(a, "INBOX").unwrap(), 1);
     assert!(!store.set_unread(a, "missing", false).unwrap());
 }
+
+#[test]
+fn the_newest_messages_without_bodies_are_listed_newest_first() {
+    let (mut store, a) = store();
+    let mut with_body = msg("m3", 3, &["INBOX"]);
+    with_body.body_text = Some("already".into());
+    store
+        .upsert_messages(a, &[msg("m1", 1, &["INBOX"]), msg("m2", 2, &["INBOX"]), with_body, msg("m4", 4, &["SENT"])])
+        .unwrap();
+    // Of the newest 2 inbox messages (m3, m2), only m2 needs a body.
+    assert_eq!(store.bodies_missing(a, "INBOX", 2).unwrap(), ["m2"]);
+    assert_eq!(store.bodies_missing(a, "INBOX", 10).unwrap(), ["m2", "m1"]);
+
+    let stored =
+        store.set_bodies(a, &[("m2".into(), "hello".into(), None), ("gone".into(), "x".into(), None)]).unwrap();
+    assert_eq!(stored, 1);
+    assert_eq!(store.bodies_missing(a, "INBOX", 10).unwrap(), ["m1"]);
+    assert_eq!(ids(&store.search(a, "hello", 10).unwrap()), ["m2"], "prefetched bodies are searchable");
+}

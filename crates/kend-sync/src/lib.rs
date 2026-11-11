@@ -5,6 +5,8 @@
 //! change history from the last sync's position, touching only what changed. If that history
 //! has expired, the account's local mail is cleared and a full sync runs again.
 //!
+//! Each sync also downloads the bodies of the newest inbox messages, so they open instantly.
+//!
 //! Once a full sync is done, each sync also loads one batch of older inbox mail, listed from
 //! the store's backfill position backwards, until Gmail has nothing older. The position is
 //! saved, so an old message moved back into the inbox can't make it skip mail in between.
@@ -29,12 +31,17 @@ pub enum Error {
     Store(#[from] kend_store::Error),
 }
 
+/// Bodies saved per transaction while prefetching.
+const PREFETCH_BATCH: usize = 25;
+
 #[derive(Clone, Debug)]
 pub struct Options {
     /// How many of the newest inbox messages a full sync fetches.
     pub inbox_limit: usize,
     /// How many older inbox messages each sync loads in the background.
     pub backfill_batch: usize,
+    /// Bodies are kept for this many of the newest inbox messages, so they open instantly.
+    pub prefetch_bodies: usize,
     /// Messages listed, fetched and committed together.
     pub page_size: usize,
     /// Parallel requests while fetching a page.
@@ -43,7 +50,7 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Self { inbox_limit: 500, backfill_batch: 500, page_size: 100, workers: 8 }
+        Self { inbox_limit: 500, backfill_batch: 500, prefetch_bodies: 200, page_size: 100, workers: 8 }
     }
 }
 
@@ -56,6 +63,8 @@ pub struct Report {
     pub deleted: usize,
     /// Older messages loaded in the background.
     pub backfilled: usize,
+    /// Message bodies downloaded ahead of being opened.
+    pub bodies: usize,
     /// True while older mail remains to be loaded; sync again soon to continue.
     pub more_to_load: bool,
 }
@@ -81,12 +90,40 @@ pub fn sync(
         },
         None => full(source, store, account, options, progress)?,
     };
-    // New mail first, then one batch of older mail.
+    // New mail first, then the bodies of the newest messages, then one batch of older mail.
+    report.bodies = prefetch_bodies(source, store, account, options)?;
     let covered = report.fetched;
     let (backfilled, more) = backfill(source, store, account, options, &mut |n| progress(covered + n))?;
     report.backfilled = backfilled;
     report.more_to_load = more;
     Ok(report)
+}
+
+/// Downloads the bodies the newest `prefetch_bodies` inbox messages don't have yet, so opening
+/// them needs no network and their text is searchable. Returns how many were stored.
+///
+/// Prefetching is optional, so Gmail pushing back or a dropped connection ends it for this
+/// round without failing the sync. Bodies are saved in small batches, so little is lost; the
+/// next sync picks up the rest.
+fn prefetch_bodies(
+    source: &impl MailSource,
+    store: &mut Store,
+    account: AccountId,
+    options: &Options,
+) -> Result<usize> {
+    let missing = store.bodies_missing(account, "INBOX", options.prefetch_bodies)?;
+    let mut stored = 0;
+    for chunk in missing.chunks(PREFETCH_BATCH) {
+        let fetched = match fetch::parallel(chunk, options.workers, |id| source.body(id)) {
+            Ok(fetched) => fetched,
+            Err(Error::Gmail(err)) if err.is_transient() => break,
+            Err(err) => return Err(err),
+        };
+        let bodies: Vec<(String, String, Option<String>)> =
+            fetched.found.into_iter().map(|(id, body)| (id, body.text, body.html)).collect();
+        stored += store.set_bodies(account, &bodies)?;
+    }
+    Ok(stored)
 }
 
 /// Loads up to `backfill_batch` inbox messages older than the backfill position and moves the
@@ -112,8 +149,9 @@ fn backfill(
     let mut fetched_count = 0;
     for chunk in missing.chunks(options.page_size) {
         let fetched = fetch::all(source, chunk, options.workers)?;
-        store.upsert_messages(account, &fetched.messages)?;
-        fetched_count += fetched.messages.len();
+        let messages = fetched.messages();
+        store.upsert_messages(account, &messages)?;
+        fetched_count += messages.len();
         progress(fetched_count);
     }
     // Nothing new in this batch means Gmail has nothing older than what's stored.
@@ -143,9 +181,10 @@ fn full(
         let want = options.page_size.min(options.inbox_limit - listed);
         let (ids, next) = source.list("INBOX", None, page_token.as_deref(), want)?;
         let fetched = fetch::all(source, &store.missing(account, &ids)?, options.workers)?;
-        store.upsert_messages(account, &fetched.messages)?;
+        let messages = fetched.messages();
+        store.upsert_messages(account, &messages)?;
         listed += ids.len();
-        report.fetched += fetched.messages.len();
+        report.fetched += messages.len();
         progress(listed);
         match next {
             Some(token) if !ids.is_empty() => page_token = Some(token),
@@ -186,9 +225,10 @@ fn incremental(
     let mut report = Report::default();
     for ids in changed.chunks(options.page_size) {
         let fetched = fetch::all(source, ids, options.workers)?;
-        store.upsert_messages(account, &fetched.messages)?;
+        let messages = fetched.messages();
+        store.upsert_messages(account, &messages)?;
         deleted.extend(fetched.gone);
-        report.fetched += fetched.messages.len();
+        report.fetched += messages.len();
         progress(report.fetched);
     }
     let deleted: Vec<String> = deleted.into_iter().collect();

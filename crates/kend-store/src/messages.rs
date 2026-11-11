@@ -266,6 +266,37 @@ impl Store {
         Ok(Some(message))
     }
 
+    /// Gmail ids of the newest `newest` messages in a mailbox that have no body stored.
+    pub fn bodies_missing(&self, account: AccountId, label_id: &str, newest: usize) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT m.gmail_id FROM (
+                 SELECT message_id, received_at FROM message_labels
+                 WHERE account_id = ?1 AND label_id = ?2
+                 ORDER BY received_at DESC, message_id DESC LIMIT ?3
+             ) newest JOIN messages m ON m.id = newest.message_id
+             WHERE m.body_text IS NULL
+             ORDER BY newest.received_at DESC",
+        )?;
+        let rows = stmt.query_map(params![account.0, label_id, newest as i64], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Stores fetched bodies by Gmail id in one transaction. Returns how many messages took one.
+    pub fn set_bodies(&mut self, account: AccountId, bodies: &[(String, String, Option<String>)]) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        let mut stored = 0;
+        {
+            let mut update = tx.prepare_cached(
+                "UPDATE messages SET body_text = ?3, body_html = ?4 WHERE account_id = ?1 AND gmail_id = ?2",
+            )?;
+            for (gmail_id, text, html) in bodies {
+                stored += update.execute(params![account.0, gmail_id, text, html])?;
+            }
+        }
+        tx.commit()?;
+        Ok(stored)
+    }
+
     /// Stores a body fetched after the message itself.
     pub fn set_body(&self, id: MessageId, text: Option<&str>, html: Option<&str>) -> Result<()> {
         self.conn

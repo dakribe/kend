@@ -18,6 +18,8 @@ everything you've already loaded works offline. The UI is native and GPU-rendere
 - **Sign in with Google** through your own browser. The token lives only in the macOS Keychain.
 - **Background sync** of your whole inbox: the newest 500 first, then older mail in batches,
   then only what changed, using Gmail's change history.
+- **Prefetched bodies** for the newest 200 messages, so they open instantly, offline, and
+  their full text is searchable.
 - **Sidebar** with Gmail's mailboxes, your nested labels and unread counts.
 - **Message list** that builds only the rows on screen and pages from SQLite as you scroll.
 - **Reading view** that turns email HTML into clean, themed text: headings, lists, quotes,
@@ -40,6 +42,7 @@ All numbers were measured on Apple silicon and can be reproduced with the comman
 | Inbox page, 50 rows (first page or halfway down) | 0.05 ms |
 | Full-text search, typical word | 0.1 ms |
 | Full-text search, word in 40% of all mail (worst case) | 26 ms |
+| Opening a message (body prefetched) | 0.007 ms |
 | Unread count | 4.7 ms |
 | Saving synced messages | ~40,000 / s |
 
@@ -72,9 +75,11 @@ crates/
 - **The UI never waits on the network.** Sync runs on its own thread with its own database
   connection (SQLite in WAL mode). Results reach the UI as events, and the UI then re-reads
   the database.
-- **Gmail's quota is shared.** One API client serves sync and the UI. A pacer spaces requests
-  to stay under Gmail's per-user quota, and when Gmail says slow down, every thread backs off
-  together.
+- **Gmail's quota is shared and the pace adapts.** One API client serves sync and the UI. It
+  caps requests in flight at 4 and paces them by quota cost. When Gmail pushes back, every
+  thread pauses and the rate halves, then climbs back as requests succeed (additive increase,
+  multiplicative decrease, as in TCP). Optional work like body prefetch stops for the round
+  instead of failing the sync.
 - **Sync is resumable.** An interrupted first sync picks up where it stopped, keeping its
   original starting point, so changes made in between are still replayed. Older mail loads
   from a saved position, so an old message moved into the inbox can't make sync skip mail.
@@ -117,7 +122,7 @@ Requires Rust. The version is pinned in `rust-toolchain.toml`.
 
 ```sh
 cargo run -p kend                      # open the app
-cargo test                             # 98 tests across the workspace
+cargo test                             # 103 tests across the workspace
 cargo run --release -p kend-store --example bench
 
 # Render a screen without a window, from built-in sample data (no account needed)
@@ -129,7 +134,6 @@ Debug builds compile dependencies with optimizations (`[profile.dev.package."*"]
 
 ## Roadmap
 
-- Prefetch bodies for the newest mail, so even the first open is instant
 - Reply All, drafts and attachments
 - Optional image loading
 - Sync Sent, Starred and other mailboxes beyond the inbox

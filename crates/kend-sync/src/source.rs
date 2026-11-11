@@ -1,6 +1,6 @@
 //! Where sync reads mail from: Gmail in the app, a fake in tests.
 
-use kend_gmail::{Gmail, GmailMessage};
+use kend_gmail::{Gmail, GmailMessage, MessageBody};
 use kend_store::{Label, LabelKind, NewMessage};
 
 use crate::parse::{decode_entities, parse_address};
@@ -21,6 +21,8 @@ pub trait MailSource: Sync {
     ) -> kend_gmail::Result<(Vec<String>, Option<String>)>;
     /// `None` when the message no longer exists.
     fn message(&self, id: &str) -> kend_gmail::Result<Option<NewMessage>>;
+    /// The message's body; `None` when the message no longer exists.
+    fn body(&self, id: &str) -> kend_gmail::Result<Option<MessageBody>>;
     /// One page of changes since `start`; `Err(NotFound)` when `start` has expired.
     fn history(&self, start: &str, page_token: Option<&str>) -> kend_gmail::Result<ChangePage>;
 }
@@ -64,6 +66,10 @@ impl MailSource for Gmail {
 
     fn message(&self, id: &str) -> kend_gmail::Result<Option<NewMessage>> {
         Ok(Gmail::message(self, id)?.map(to_new_message))
+    }
+
+    fn body(&self, id: &str) -> kend_gmail::Result<Option<MessageBody>> {
+        Gmail::body(self, id)
     }
 
     fn history(&self, start: &str, page_token: Option<&str>) -> kend_gmail::Result<ChangePage> {

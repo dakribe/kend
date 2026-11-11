@@ -1,7 +1,7 @@
 //! A small Gmail API client: the calls sync needs, with token refresh and retries built in.
 //! One client is shared by sync's worker threads.
 
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -26,33 +26,79 @@ pub struct Gmail {
     pacer: Pacer,
 }
 
-/// Spaces requests to a quota-unit budget shared by every thread using the client. Each
-/// request reserves the next free slot, then sleeps until it.
+/// Paces requests for every thread using the client. Two limits apply: requests start no
+/// faster than the current rate allows (quota units a second), and at most `MAX_IN_FLIGHT` run
+/// at once, as Gmail also limits concurrent requests per user. The rate adapts: Gmail pushing
+/// back halves it, and each success raises it a little (additive increase, multiplicative
+/// decrease, as TCP does), so it settles where Gmail stops refusing.
 struct Pacer {
-    next: Mutex<Instant>,
-    per_unit: Duration,
+    state: Mutex<Pace>,
+    freed: Condvar,
+}
+
+struct Pace {
+    next: Instant,
+    /// Quota units a second.
+    rate: f64,
+    in_flight: usize,
+}
+
+/// Held while a request runs; dropping it frees the slot.
+struct Permit<'a>(&'a Pacer);
+
+impl Drop for Permit<'_> {
+    fn drop(&mut self) {
+        self.0.lock().in_flight -= 1;
+        self.0.freed.notify_one();
+    }
 }
 
 impl Pacer {
+    const MAX_IN_FLIGHT: usize = 4;
+    const MIN_RATE: f64 = 25.0;
+
     fn new(units_per_second: u32) -> Self {
-        Self { next: Mutex::new(Instant::now()), per_unit: Duration::from_secs(1) / units_per_second }
+        let pace = Pace { next: Instant::now(), rate: f64::from(units_per_second), in_flight: 0 };
+        Self { state: Mutex::new(pace), freed: Condvar::new() }
     }
 
-    fn wait(&self, units: u32) {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Pace> {
+        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Waits for a free slot and this request's turn, then holds the slot until dropped.
+    fn begin(&self, units: u32) -> Permit<'_> {
+        let mut pace = self.lock();
+        while pace.in_flight >= Self::MAX_IN_FLIGHT {
+            pace = self.freed.wait(pace).unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+        pace.in_flight += 1;
         let now = Instant::now();
-        let slot = {
-            let mut next = self.next.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            let slot = (*next).max(now);
-            *next = slot + self.per_unit * units;
-            slot
-        };
+        let slot = pace.next.max(now);
+        pace.next = slot + Duration::from_secs_f64(f64::from(units) / pace.rate);
+        drop(pace);
         thread::sleep(slot.saturating_duration_since(now));
+        Permit(self)
     }
 
-    /// Holds every thread back for `pause`: when Gmail says slow down, it means all of us.
-    fn cool_down(&self, pause: Duration) {
-        let mut next = self.next.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        *next = (*next).max(Instant::now() + pause);
+    /// Gmail said slow down: halve the rate and hold every thread back for `pause`. Returns
+    /// the new rate.
+    fn slow_down(&self, pause: Duration) -> f64 {
+        let mut pace = self.lock();
+        pace.rate = (pace.rate / 2.0).max(Self::MIN_RATE);
+        pace.next = pace.next.max(Instant::now() + pause);
+        pace.rate
+    }
+
+    /// A request went through: creep back toward the full rate.
+    fn speed_up(&self) {
+        let mut pace = self.lock();
+        pace.rate = (pace.rate + 2.0).min(f64::from(UNITS_PER_SECOND));
+    }
+
+    #[cfg(test)]
+    fn rate(&self) -> f64 {
+        self.lock().rate
     }
 }
 
@@ -279,10 +325,15 @@ impl Gmail {
         let mut attempt = 0;
         loop {
             attempt += 1;
-            self.pacer.wait(units);
+            let permit = self.pacer.begin(units);
             let bearer = format!("Bearer {}", self.bearer()?);
-            match send(&bearer).map_err(Error::from).and_then(json) {
-                Ok(value) => return Ok(value),
+            let result = send(&bearer).map_err(Error::from).and_then(json);
+            drop(permit);
+            match result {
+                Ok(value) => {
+                    self.pacer.speed_up();
+                    return Ok(value);
+                }
                 // The token expired early or was replaced: refresh once and try again.
                 Err(Error::Unauthorized) if !refreshed => {
                     refreshed = true;
@@ -290,9 +341,8 @@ impl Gmail {
                 }
                 // Pause every thread, not just this one; the pacer makes this request wait too.
                 Err(Error::RateLimited) if attempt < ATTEMPTS => {
-                    let pause = backoff(attempt);
-                    eprintln!("kend: Gmail rate limit, pausing all requests for {:.1} s", pause.as_secs_f64());
-                    self.pacer.cool_down(pause);
+                    let rate = self.pacer.slow_down(backoff(attempt));
+                    eprintln!("kend: Gmail rate limit, slowing to {rate:.0} quota units/s");
                 }
                 Err(err) if err.is_transient() && attempt < ATTEMPTS => thread::sleep(backoff(attempt)),
                 Err(err) => return Err(err),
@@ -337,18 +387,50 @@ mod tests {
         let start = Instant::now();
         thread::scope(|s| {
             for _ in 0..10 {
-                s.spawn(|| pacer.wait(5));
+                s.spawn(|| drop(pacer.begin(5)));
             }
         });
         assert!(start.elapsed() >= Duration::from_millis(45), "{:?}", start.elapsed());
     }
 
     #[test]
-    fn a_cool_down_holds_back_the_next_request() {
+    fn no_more_than_four_requests_run_at_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let pacer = Pacer::new(100_000);
+        let (running, peak) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        thread::scope(|s| {
+            for _ in 0..12 {
+                s.spawn(|| {
+                    let _permit = pacer.begin(1);
+                    let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(now, Ordering::SeqCst);
+                    thread::sleep(Duration::from_millis(20));
+                    running.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+        });
+        assert_eq!(peak.load(Ordering::SeqCst), Pacer::MAX_IN_FLIGHT);
+    }
+
+    #[test]
+    fn pushback_halves_the_rate_and_success_wins_it_back_slowly() {
+        let pacer = Pacer::new(UNITS_PER_SECOND);
+        assert_eq!(pacer.slow_down(Duration::ZERO), 100.0);
+        assert_eq!(pacer.slow_down(Duration::ZERO), 50.0);
+        for _ in 0..4 {
+            pacer.slow_down(Duration::ZERO);
+        }
+        assert_eq!(pacer.rate(), Pacer::MIN_RATE, "never stops entirely");
+        pacer.speed_up();
+        assert_eq!(pacer.rate(), Pacer::MIN_RATE + 2.0);
+    }
+
+    #[test]
+    fn a_pause_holds_back_the_next_request() {
         let pacer = Pacer::new(1000);
-        pacer.cool_down(Duration::from_millis(30));
+        pacer.slow_down(Duration::from_millis(30));
         let start = Instant::now();
-        pacer.wait(1);
+        drop(pacer.begin(1));
         assert!(start.elapsed() >= Duration::from_millis(25));
     }
 

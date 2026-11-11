@@ -136,8 +136,8 @@ fn log(result: &kend_sync::Result<Report>, took: Duration) {
             let kind = if r.full { "full sync" } else { "sync" };
             let older = if r.more_to_load { ", more older mail to load" } else { "" };
             eprintln!(
-                "kend: {kind}: {} new or changed, {} deleted, {} older loaded in {secs:.1} s{older}",
-                r.fetched, r.deleted, r.backfilled
+                "kend: {kind}: {} new or changed, {} deleted, {} bodies prefetched, {} older loaded in {secs:.1} s{older}",
+                r.fetched, r.deleted, r.bodies, r.backfilled
             );
         }
         Err(err) => eprintln!("kend: sync failed after {secs:.1} s: {err}"),

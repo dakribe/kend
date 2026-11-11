@@ -17,6 +17,8 @@ struct Fake {
     history_expired: bool,
     failing: HashSet<String>,
     fetches: AtomicUsize,
+    bodies: AtomicUsize,
+    failing_bodies: HashSet<String>,
 }
 
 fn message(id: &str, received_at: i64, labels: &[&str]) -> NewMessage {
@@ -87,6 +89,15 @@ impl MailSource for Fake {
         Ok(self.messages.lock().unwrap().get(id).cloned())
     }
 
+    fn body(&self, id: &str) -> kend_gmail::Result<Option<kend_gmail::MessageBody>> {
+        self.bodies.fetch_add(1, Ordering::Relaxed);
+        if self.failing_bodies.contains(id) {
+            return Err(GmailError::RateLimited);
+        }
+        let exists = self.messages.lock().unwrap().contains_key(id);
+        Ok(exists.then(|| kend_gmail::MessageBody { text: format!("body of {id}"), html: None }))
+    }
+
     fn history(&self, _start: &str, _page_token: Option<&str>) -> kend_gmail::Result<ChangePage> {
         if self.history_expired {
             return Err(GmailError::NotFound);
@@ -114,7 +125,8 @@ fn inbox_ids(store: &Store, account: AccountId) -> Vec<String> {
 }
 
 fn small() -> Options {
-    Options { inbox_limit: 25, backfill_batch: 10, page_size: 10, workers: 4 }
+    // Body prefetch off here; it has its own test.
+    Options { inbox_limit: 25, backfill_batch: 10, prefetch_bodies: 0, page_size: 10, workers: 4 }
 }
 
 #[test]
@@ -126,7 +138,7 @@ fn the_first_sync_fetches_the_newest_inbox_page_by_page() {
 
     // The newest 25, then a batch of 10 listed older: the oldest stored one is listed again
     // (the search reaches into its second, so mail from that second isn't skipped) and 9 are new.
-    assert_eq!(report, Report { full: true, fetched: 25, deleted: 0, backfilled: 9, more_to_load: true });
+    assert_eq!(report, Report { full: true, fetched: 25, deleted: 0, backfilled: 9, bodies: 0, more_to_load: true });
     assert_eq!(progress, [10, 20, 25, 34]);
     assert_eq!(store.full_sync_start(a).unwrap(), None);
     let ids = inbox_ids(&store, a);
@@ -202,7 +214,7 @@ fn later_syncs_apply_only_the_changes() {
     ];
 
     let report = sync(&fake, &mut store, a, &small(), &mut |_| {}).unwrap();
-    assert_eq!(report, Report { full: false, fetched: 2, deleted: 1, backfilled: 0, more_to_load: false });
+    assert_eq!(report, Report { full: false, fetched: 2, deleted: 1, backfilled: 0, bodies: 0, more_to_load: false });
     assert_eq!(fake.fetches.load(Ordering::Relaxed) - before, 2, "only changed messages are fetched");
     assert_eq!(inbox_ids(&store, a), ["new", "m004", "m003", "m002", "m001"]);
     assert!(store.list(a, "INBOX", None, 1).unwrap()[0].unread);
@@ -261,4 +273,50 @@ fn an_interrupted_first_sync_resumes_where_it_stopped() {
     assert_eq!(fake.fetches.load(Ordering::Relaxed) - before, 20);
     assert_eq!(inbox_ids(&store, a).len(), 30);
     assert_eq!(store.history_id(a).unwrap().as_deref(), Some("100"));
+}
+
+#[test]
+fn bodies_of_the_newest_messages_are_downloaded_once() {
+    let fake = Fake::with_inbox(12);
+    let (mut store, a) = setup();
+    let options = Options { prefetch_bodies: 5, ..small() };
+    let report = sync(&fake, &mut store, a, &options, &mut |_| {}).unwrap();
+    assert_eq!(report.bodies, 5);
+    let newest = store.list(a, "INBOX", None, 1).unwrap().remove(0);
+    let message = store.message(newest.id).unwrap().unwrap();
+    assert_eq!(message.body_text.as_deref(), Some("body of m011"));
+    assert_eq!(store.bodies_missing(a, "INBOX", 5).unwrap(), Vec::<String>::new());
+
+    // The next sync has nothing new to download.
+    let before = fake.bodies.load(Ordering::Relaxed);
+    assert_eq!(sync(&fake, &mut store, a, &options, &mut |_| {}).unwrap().bodies, 0);
+    assert_eq!(fake.bodies.load(Ordering::Relaxed), before);
+
+    // New mail gets its body in the same sync that brings it in.
+    fake.add(message_at("new", 99_000));
+    *fake.changes.lock().unwrap() =
+        vec![ChangePage { changed: vec!["new".into()], history_id: "101".into(), ..ChangePage::default() }];
+    assert_eq!(sync(&fake, &mut store, a, &options, &mut |_| {}).unwrap().bodies, 1);
+}
+
+fn message_at(id: &str, received_at: i64) -> NewMessage {
+    message(id, received_at, &["INBOX"])
+}
+
+#[test]
+fn gmail_pushing_back_on_prefetch_does_not_fail_the_sync() {
+    let mut fake = Fake::with_inbox(60);
+    // All 60 are synced. Of the newest 50 (m059 down to m010), m030 is in the second batch of
+    // 25: the first batch is saved, the second is dropped.
+    fake.failing_bodies.insert("m030".into());
+    let (mut store, a) = setup();
+    let options = Options { inbox_limit: 60, prefetch_bodies: 50, ..small() };
+    let report = sync(&fake, &mut store, a, &options, &mut |_| {}).unwrap();
+    assert_eq!(report.bodies, 25);
+    assert!(store.history_id(a).unwrap().is_some(), "the sync itself completed");
+
+    // Next time Gmail accepts, prefetch carries on from where it stopped.
+    fake.failing_bodies.clear();
+    let report = sync(&fake, &mut store, a, &options, &mut |_| {}).unwrap();
+    assert_eq!(report.bodies, 25);
 }

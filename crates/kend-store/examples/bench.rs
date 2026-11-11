@@ -79,6 +79,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     time("search prefix \"recei\" (top 50)", 50, &mut || {
         store.search(account, "recei", 50).map(|_| ()).unwrap_or_default();
     });
+    // What opening a message reads once its body is prefetched.
+    let newest = store.list(account, "INBOX", None, 1)?.remove(0).id;
+    time("open a stored message with its body", 1000, &mut || {
+        store.message(newest).map(|_| ()).unwrap_or_default();
+    });
     // Closer to real mail: a word that appears in a handful of messages.
     time("search a rare word (\"4321\")", 200, &mut || {
         store.search(account, "4321", 50).map(|_| ()).unwrap_or_default();
