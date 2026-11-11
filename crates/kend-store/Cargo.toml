@@ -1,0 +1,13 @@
+[package]
+name = "kend-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+dirs = "7.0.0"
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+thiserror = "2.0.21"
+
+[lints]
+workspace = true

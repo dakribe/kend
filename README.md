@@ -30,6 +30,25 @@ Sign-in follows [RFC 8252](https://datatracker.ietf.org/doc/html/rfc8252), OAuth
 - The refresh token is stored only in the macOS Keychain. Access tokens stay in memory.
 - kend asks for one scope, `gmail.modify`: read, label and send mail, with no permanent deletion.
 
+## Local mail store
+
+All mail lives in one SQLite database (`~/Library/Application Support/kend/mail.sqlite`).
+The UI reads from it directly, and Gmail sync writes into it in the background.
+
+- Mailbox pages use keyset pagination over a covering index, so a page deep in the mailbox
+  costs the same as the first.
+- Full-text search uses SQLite FTS5, kept in sync with the messages by triggers. Subject and
+  sender rank above body text.
+
+Measured on 100,000 messages (`cargo run --release -p kend-store --example bench`, Apple silicon):
+
+| Operation | Time |
+|---|---|
+| Inbox page, 50 rows (first or halfway down) | 0.05 ms |
+| Search for a typical word | 0.1 ms |
+| Search for a word in 40% of all mail (worst case) | 26 ms |
+| Insert | ~40,000 messages/s |
+
 ## Build and run
 
 Requires Rust (the version is pinned in `rust-toolchain.toml`).
