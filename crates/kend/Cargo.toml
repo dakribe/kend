@@ -6,6 +6,8 @@ license.workspace = true
 
 [dependencies]
 kend-gmail.workspace = true
+kend-store.workspace = true
+kend-sync.workspace = true
 rune.workspace = true
 rune-kit.workspace = true
 

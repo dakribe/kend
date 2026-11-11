@@ -31,12 +31,24 @@ pub(crate) fn json<T: DeserializeOwned>(mut response: Response<ureq::Body>) -> R
 }
 
 /// OAuth errors look like `{"error": "invalid_grant", ...}`; API errors like
-/// `{"error": {"message": ...}}`.
+/// `{"error": {"message": ..., "errors": [{"reason": ...}]}}`.
 fn google_error(status: u16, body: &str) -> Error {
     let value: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
     let error = &value["error"];
-    if error.as_str() == Some("invalid_grant") {
-        return Error::SignedOut;
+    let reason = error["errors"][0]["reason"].as_str().unwrap_or_default();
+    // OAuth endpoint errors are plain strings and keep their own meaning, whatever the status.
+    let oauth = error.is_string();
+    match status {
+        _ if error.as_str() == Some("invalid_grant") => return Error::SignedOut,
+        _ if oauth => {}
+        401 => return Error::Unauthorized,
+        404 => return Error::NotFound,
+        429 => return Error::RateLimited,
+        403 if reason == "rateLimitExceeded" || reason == "userRateLimitExceeded" => {
+            return Error::RateLimited;
+        }
+        500..=599 => return Error::Server(status),
+        _ => {}
     }
     let message = error["message"]
         .as_str()
@@ -57,6 +69,18 @@ mod tests {
             r#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#,
         );
         assert!(matches!(err, Error::SignedOut));
+    }
+
+    #[test]
+    fn statuses_map_to_errors_the_client_can_act_on() {
+        assert!(matches!(google_error(401, "{}"), Error::Unauthorized));
+        assert!(matches!(google_error(404, "{}"), Error::NotFound));
+        assert!(matches!(google_error(429, "{}"), Error::RateLimited));
+        assert!(matches!(google_error(503, ""), Error::Server(503)));
+        let quota = r#"{"error":{"code":403,"errors":[{"reason":"userRateLimitExceeded"}],"message":"slow down"}}"#;
+        assert!(matches!(google_error(403, quota), Error::RateLimited));
+        let forbidden = r#"{"error":{"code":403,"errors":[{"reason":"insufficientPermissions"}],"message":"no"}}"#;
+        assert!(matches!(google_error(403, forbidden), Error::Google(_)));
     }
 
     #[test]

@@ -81,6 +81,10 @@ const MIGRATIONS: &[&str] = &[
         VALUES (new.id, new.subject, new.from_name, new.from_email, new.to_addrs, new.snippet, new.body_text, new.account_id);
     END;
     ",
+    // 2: an unfinished full sync's starting point, so an interrupted one resumes.
+    "
+    ALTER TABLE accounts ADD COLUMN full_sync_start TEXT;
+    ",
 ];
 
 pub(crate) fn migrate(conn: &mut Connection) -> Result<()> {

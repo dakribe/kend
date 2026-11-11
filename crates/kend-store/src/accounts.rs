@@ -24,6 +24,19 @@ impl Store {
         Ok(())
     }
 
+    /// Removes the account's messages and sync position, keeping the account. Used before a
+    /// fresh full sync, when the server's change history no longer reaches back far enough.
+    pub fn clear_messages(&mut self, account: AccountId) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM messages WHERE account_id = ?1", [account.0])?;
+        tx.execute(
+            "UPDATE accounts SET history_id = NULL, full_sync_start = NULL WHERE id = ?1",
+            [account.0],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Gmail's history id from the last sync, the point the next one continues from.
     pub fn history_id(&self, account: AccountId) -> Result<Option<String>> {
         Ok(self
@@ -41,6 +54,38 @@ impl Store {
         self.conn.execute(
             "UPDATE accounts SET history_id = ?2 WHERE id = ?1",
             params![account.0, history_id],
+        )?;
+        Ok(())
+    }
+
+    /// Where an unfinished full sync started, if one is under way.
+    pub fn full_sync_start(&self, account: AccountId) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT full_sync_start FROM accounts WHERE id = ?1",
+                [account.0],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// Records that a full sync began at `history_id`.
+    pub fn begin_full_sync(&self, account: AccountId, history_id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE accounts SET full_sync_start = ?2 WHERE id = ?1",
+            params![account.0, history_id],
+        )?;
+        Ok(())
+    }
+
+    /// Ends a full sync: later syncs replay changes from where it started.
+    pub fn finish_full_sync(&self, account: AccountId) -> Result<()> {
+        self.conn.execute(
+            "UPDATE accounts SET history_id = full_sync_start, full_sync_start = NULL
+             WHERE id = ?1 AND full_sync_start IS NOT NULL",
+            [account.0],
         )?;
         Ok(())
     }
@@ -106,6 +151,18 @@ mod tests {
         assert_eq!(store.history_id(a).unwrap(), None);
         store.set_history_id(a, "123456").unwrap();
         assert_eq!(store.history_id(a).unwrap().as_deref(), Some("123456"));
+    }
+
+    #[test]
+    fn a_full_sync_hands_its_start_to_the_history_id() {
+        let store = Store::open_in_memory().unwrap();
+        let a = store.upsert_account("me@example.com").unwrap();
+        store.begin_full_sync(a, "500").unwrap();
+        assert_eq!(store.full_sync_start(a).unwrap().as_deref(), Some("500"));
+        assert_eq!(store.history_id(a).unwrap(), None);
+        store.finish_full_sync(a).unwrap();
+        assert_eq!(store.history_id(a).unwrap().as_deref(), Some("500"));
+        assert_eq!(store.full_sync_start(a).unwrap(), None);
     }
 
     #[test]

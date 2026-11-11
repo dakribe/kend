@@ -1,6 +1,8 @@
 //! kend: a fast local email client.
 
 mod app;
+mod session;
+mod sync_worker;
 mod view;
 
 use rune::AppSpec;

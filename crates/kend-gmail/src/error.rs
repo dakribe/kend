@@ -16,6 +16,14 @@ pub enum Error {
     SignedOut,
     #[error("Google returned an error: {0}")]
     Google(String),
+    #[error("the access token was rejected")]
+    Unauthorized,
+    #[error("not found")]
+    NotFound,
+    #[error("Gmail is rate limiting requests")]
+    RateLimited,
+    #[error("Gmail had a server error ({0})")]
+    Server(u16),
     #[error("network error: {0}")]
     Network(#[from] ureq::Error),
     #[error("local sign-in server failed: {0}")]
@@ -29,5 +37,15 @@ pub enum Error {
 impl From<keyring_core::Error> for Error {
     fn from(err: keyring_core::Error) -> Self {
         Error::Keychain(err.to_string())
+    }
+}
+
+impl Error {
+    /// Worth trying again after a pause: rate limits, server errors and dropped connections.
+    pub fn is_transient(&self) -> bool {
+        matches!(
+            self,
+            Error::RateLimited | Error::Server(_) | Error::Network(_)
+        )
     }
 }

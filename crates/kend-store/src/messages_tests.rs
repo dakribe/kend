@@ -43,6 +43,17 @@ fn a_mailbox_lists_newest_first_with_flags() {
     assert!(inbox[0].unread && inbox[0].starred);
     assert!(!inbox[1].unread && !inbox[1].starred);
     assert_eq!(store.unread_count(a, "INBOX").unwrap(), 1);
+    assert_eq!(store.count(a, "INBOX").unwrap(), 2);
+}
+
+#[test]
+fn missing_lists_ids_not_yet_stored() {
+    let (mut store, a) = store();
+    store
+        .upsert_messages(a, &[msg("have", 1, &["INBOX"])])
+        .unwrap();
+    let ids = ["new1".to_string(), "have".to_string(), "new2".to_string()];
+    assert_eq!(store.missing(a, &ids).unwrap(), ["new1", "new2"]);
 }
 
 #[test]

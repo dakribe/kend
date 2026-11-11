@@ -12,6 +12,8 @@ version = "0.1.0"
 rune = { git = "https://github.com/anomalyco/rune", rev = "0ea75abef0a6caa014067a88f89518b9a04cce2b" }
 rune-kit = { git = "https://github.com/anomalyco/rune", rev = "0ea75abef0a6caa014067a88f89518b9a04cce2b" }
 kend-gmail = { path = "crates/kend-gmail" }
+kend-store = { path = "crates/kend-store" }
+kend-sync = { path = "crates/kend-sync" }
 
 # Line tables keep backtraces readable without the memory cost of full debug info.
 [profile.dev]

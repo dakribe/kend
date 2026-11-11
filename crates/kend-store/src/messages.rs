@@ -157,6 +157,30 @@ impl Store {
         Ok(rows)
     }
 
+    /// Which of `gmail_ids` aren't stored yet, in the order given.
+    pub fn missing(&self, account: AccountId, gmail_ids: &[String]) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT 1 FROM messages WHERE account_id = ?1 AND gmail_id = ?2")?;
+        let mut missing = Vec::new();
+        for id in gmail_ids {
+            if !stmt.exists(params![account.0, id])? {
+                missing.push(id.clone());
+            }
+        }
+        Ok(missing)
+    }
+
+    /// Messages in a mailbox.
+    pub fn count(&self, account: AccountId, label_id: &str) -> Result<u64> {
+        let count: i64 = self.conn.query_row(
+            "SELECT count(*) FROM message_labels WHERE account_id = ?1 AND label_id = ?2",
+            params![account.0, label_id],
+            |r| r.get(0),
+        )?;
+        Ok(count.max(0) as u64)
+    }
+
     /// Unread messages in a mailbox, for the sidebar's badge.
     pub fn unread_count(&self, account: AccountId, label_id: &str) -> Result<u64> {
         // Walk the (smaller) UNREAD label and probe the mailbox by primary key, rather than

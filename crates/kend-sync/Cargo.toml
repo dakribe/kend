@@ -1,0 +1,13 @@
+[package]
+name = "kend-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+kend-gmail.workspace = true
+kend-store.workspace = true
+thiserror = "2.0.21"
+
+[lints]
+workspace = true
