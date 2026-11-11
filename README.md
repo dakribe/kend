@@ -40,9 +40,12 @@ everything you've already loaded works offline. The UI is native and GPU-rendere
 - **Command palette** (⌘K): every action and mailbox, found by typing a few letters
   ("gs" for Go to Sent). It lists only what applies right now, and recently used commands
   come first.
-- **Compose, reply and forward**, with replies kept in their Gmail conversation.
+- **One action bar** under the toolbar: Archive, Delete, Star and Unread sit in the same place
+  in the list, in an open message and in a sender's mail, and every button shows its key.
+- **Compose, reply and forward**, with replies kept in their Gmail conversation. A discarded
+  draft comes back with Undo (Z).
 - **Keyboard first**: J/K or arrows to move, Return to open, Esc to go back, ⌘F or / to
-  search, E to archive, # to delete, S to star, Shift+U / Shift+I for unread / read, Z to undo, R to reply, F to forward, ⌘N for a new message, ⌘Return to send, ⌘K for the command palette, and ? to see every shortcut.
+  search, E to archive, # to delete, S to star, Shift+U / Shift+I for unread / read, Z to undo, R to reply, F to forward, O to open in the browser, ⌘N for a new message, ⌘Return to send, ⌘K for the command palette, and ? to see every shortcut.
 - **Instant actions.** Nothing animates except loading indicators: opening a message, moving
   the selection, switching mailboxes and toggling the sidebar all land in the frame they
   happen, and a test checks it for each action.
@@ -122,7 +125,7 @@ Sign-in follows [RFC 8252](https://datatracker.ietf.org/doc/html/rfc8252), OAuth
 - Line breaks are stripped from header fields in outgoing mail, so typed text can't add
   headers (header injection).
 - Remote images aren't loaded, so opening an email doesn't tell the sender.
-- Signing out deletes the account's local mail and revokes its token.
+- Signing out asks first, then deletes the account's local mail and revokes its token.
 
 ## Setup
 

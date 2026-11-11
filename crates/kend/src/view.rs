@@ -78,6 +78,15 @@ pub const SCENES: &[Scene] = &[
         s.open_message("sample-1");
         s.show_sender();
     }),
+    ("sign-out", |s| {
+        s.auth = sample_inbox(SyncStatus::Synced);
+        s.confirm_sign_out = true;
+    }),
+    ("discarded", |s| {
+        s.auth = sample_inbox(SyncStatus::Synced);
+        s.compose_new();
+        s.discard_compose();
+    }),
     ("reading-loading", |s| {
         s.auth = sample_inbox(SyncStatus::Synced);
         s.open_message("sample-2");
@@ -321,15 +330,16 @@ fn mail(
     if let Some(error) = &session.error {
         main = main.child(sync_error(k, error));
     }
+    // The action bar comes first, so its buttons sit at the same height on every screen.
+    if !composing {
+        main = main.child(action_bar(k, session)).child(el().w_full().h(1.0).fill(k.c.border_muted));
+    }
     if let Some(sender) = &session.sender
         && !reading
         && !composing
         && searching.is_none()
     {
         main = main.child(sender_strip(k, &sender.address.email));
-    }
-    if !composing {
-        main = main.child(action_bar(k, session)).child(el().w_full().h(1.0).fill(k.c.border_muted));
     }
     let content = match (&session.compose, &session.reading) {
         (Some(compose), _) => compose_view(k, compose),
@@ -712,8 +722,10 @@ mod tests {
     fn triage_buttons_stay_put_when_a_message_opens() {
         let list = render("selecting");
         let reading = render("reading");
+        let sender = render("sender");
         for target in ["archive", "delete", "toggle-star", "toggle-read"] {
             assert_eq!(list.find(target), reading.find(target), "{target} moved");
+            assert_eq!(list.find(target), sender.find(target), "{target} moved");
         }
     }
 
