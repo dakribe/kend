@@ -47,6 +47,8 @@ pub enum Command {
     LeaveSender,
     Shortcuts,
     SignOut,
+    Send,
+    Discard,
     /// Go to a mailbox or label, by its Gmail label id.
     Go(String),
 }
@@ -74,13 +76,17 @@ pub fn entries(app: &App) -> Vec<Entry> {
     };
     let reading = session.reading.as_ref();
     let composing = session.compose.is_some();
+    if composing {
+        out.push(Entry::new(Send, "Send", &["⌘Return"]));
+        out.push(Entry::new(Discard, "Discard Draft", &[]));
+    }
     out.push(Entry::new(NewMessage, "New Message", &["⌘N"]));
     if reading.is_some() && !composing {
         out.push(Entry::new(Reply, "Reply", &["R"]));
         out.push(Entry::new(Forward, "Forward", &["F"]));
     }
     if reading.is_some_and(|r| r.message.body_html.is_some()) {
-        out.push(Entry::new(OpenInBrowser, "Open in Browser", &[]));
+        out.push(Entry::new(OpenInBrowser, "Open in Browser", &["O"]));
     }
     if !composing && !session.targets().is_empty() {
         let n = session.targets().len();
@@ -110,7 +116,7 @@ pub fn entries(app: &App) -> Vec<Entry> {
     if reading.is_none() && !composing && session.sender.is_some() {
         out.push(Entry::new(LeaveSender, format!("Back to {}", mailbox_name(session)), &["Esc"]));
     }
-    if session.last_move.is_some() {
+    if session.last_move.is_some() || session.discarded.is_some() {
         out.push(Entry::new(Undo, "Undo", &["Z"]));
     }
     if reading.is_none() && !composing && !session.visible().is_empty() {
@@ -131,7 +137,7 @@ pub fn entries(app: &App) -> Vec<Entry> {
     for l in &session.labels {
         out.push(Entry::new(Go(l.id.clone()), format!("Go to {}", leaf(&l.name)), &[]));
     }
-    out.push(Entry::new(SignOut, "Sign Out", &[]));
+    out.push(Entry::new(SignOut, "Sign Out…", &[]));
     out
 }
 
@@ -243,7 +249,9 @@ impl App {
             Command::ShowSender => self.show_sender(),
             Command::LeaveSender => self.leave_sender(),
             Command::Shortcuts => self.help = true,
-            Command::SignOut => self.sign_out(),
+            Command::SignOut => self.ask_sign_out(),
+            Command::Send => self.send(),
+            Command::Discard => self.discard_compose(),
             Command::Go(mailbox) => {
                 self.close_message();
                 self.select_mailbox(&mailbox);

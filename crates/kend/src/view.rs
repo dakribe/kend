@@ -1,15 +1,20 @@
 use kend_gmail::{Account, CancelToken};
 use rune::{Align, Cx, El, col, el, row, text};
 use rune_kit::shell::{SidebarToggle, SplitView, Toolbar};
-use rune_kit::{Button, ButtonVariant, ControlSize, Dialog, Keybind, Kit, Spinner, TextInput};
+use rune_kit::{
+    Button, ButtonVariant, ControlSize, Dialog, IconButton, IconButtonVariant, Keybind, KeybindVariant, Kit, Spinner,
+    TextInput, glyphs,
+};
 
+use crate::actions::action_bar;
 use crate::app::instant;
 use crate::app::{App, Auth};
 use crate::compose::compose_view;
+use crate::icons;
 use crate::message_list::message_list;
 use crate::reading::reading_view;
 use crate::samples::{self, sample_inbox};
-use crate::session::{Move, Session, SyncStatus};
+use crate::session::{Session, SyncStatus};
 use crate::sidebar::{mailbox_name, sidebar};
 
 type Scene = (&'static str, fn(&mut App));
@@ -90,6 +95,7 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     let k = kit(cx.system_dark());
     let mut layer = Vec::new();
     shortcuts(&k, s.help, &mut layer);
+    sign_out_dialog(&k, s, &mut layer);
     crate::palette::palette_view(&k, s, &mut layer);
     instant_root(rune_kit::root(build(s, cx), layer))
 }
@@ -129,7 +135,8 @@ const SHORTCUTS: &[(&str, &[Shortcut])] = &[
             (&["S"], "Star or unstar"),
             (&["⇧U"], "Mark as unread"),
             (&["⇧I"], "Mark as read"),
-            (&["Z"], "Undo"),
+            (&["Z"], "Undo, or bring back a discarded draft"),
+            (&["O"], "Open in Browser"),
             (&["R"], "Reply"),
             (&["F"], "Forward"),
             (&["⇧F"], "All mail from this sender"),
@@ -252,7 +259,8 @@ fn mail(
         (None, Some(sender)) => sender.address.display(),
         (None, None) => mailbox_name(session),
     };
-    let title = text(title).key("mailbox-title").font(k.ty.ui_medium).color(k.c.text_base).truncate().max_w(240.0);
+    let composing = session.compose.is_some();
+    let reading = session.reading.is_some();
     let counts = text(match (searching, &session.sender) {
         (Some(results), _) => results_count(results.len()),
         (None, Some(sender)) => counts(session.total, sender.unread),
@@ -261,22 +269,19 @@ fn mail(
     .key("counts")
     .font(k.ty.ui)
     .color(k.c.text_muted);
-    let composing = session.compose.is_some();
-    let reading = session.reading.is_some();
-    let checked = session.checked.len();
-    // While messages are checked, their count and Clear take the place of the mailbox counts.
-    let counts = if !reading && !composing && checked > 0 {
-        row()
-            .gap(4.0)
-            .items_center()
-            .child(text(format!("{checked} selected")).key("checked-count").font(k.ty.ui).color(k.c.text_muted))
-            .child(ghost(k, "Clear", "Clear selection (Esc)", "clear-checked", |s| s.clear_checked()))
+    // Where you are. From an open message, or from one sender's mail, the place you came from
+    // is a button that takes you back (Esc), in the spot the title held.
+    let mut leading = row().gap(10.0).items_center().min_w(0.0);
+    if reading {
+        leading = leading.child(back(k, title, "back", |s| s.close_message()));
+    } else if session.sender.is_some() && searching.is_none() && !composing {
+        leading = leading
+            .child(back(k, mailbox_name(session), "leave-sender", |s| s.leave_sender()))
+            .child(title_text(k, title));
     } else {
-        counts
-    };
-    // The toolbar holds where you are, search and New Message. Message actions live in the
-    // open message's own bar, and account actions at the foot of the sidebar.
-    let leading = row().gap(10.0).items_center().min_w(0.0).child(title).child(counts);
+        leading = leading.child(title_text(k, title));
+    }
+    let leading = leading.child(counts);
     let mut toolbar = Toolbar::new().leading(leading);
     if !composing {
         let search = TextInput::new(&session.search)
@@ -293,15 +298,24 @@ fn mail(
             .on_key(|s: &mut App, event: &rune::KeyEvent, tx: &mut rune::Tx| s.search_key(event, tx))
             .build(k)
             .key("search");
-        toolbar = toolbar.center(search);
-        if !reading && (checked > 0 || session.selected.is_some()) {
-            toolbar = toolbar
-                .trailing(ghost(k, "Archive", "Archive (E)", "archive", |s| s.move_message(Move::Archive)))
-                .trailing(ghost(k, "Delete", "Move to Trash (#)", "delete", |s| s.move_message(Move::Trash)));
-        }
-        toolbar = toolbar
-            .trailing(ghost(k, "New Message", "New message (⌘N)", "new-message", |s| s.compose_new()))
-            .trailing(ghost(k, "?", "Keyboard shortcuts (?)", "help", |s| s.toggle_help()));
+        let new_message = crate::actions::Action {
+            icon: &icons::COMPOSE,
+            label: "New Message",
+            help: "New message",
+            keys: &["⌘N"],
+            key: "new-message",
+            enabled: true,
+            press: |s| s.compose_new(),
+        };
+        let help = IconButton::new(&glyphs::KEYBOARD)
+            .variant(IconButtonVariant::Ghost)
+            .label("Keyboard Shortcuts")
+            .help("Keyboard shortcuts")
+            .shortcut("?")
+            .on_press_tx(instant(|s: &mut App| s.toggle_help()))
+            .build(k)
+            .key("help");
+        toolbar = toolbar.center(search).trailing(new_message.build(k)).trailing(help);
     }
     let mut main = col().w_full().h_full().min_h(0.0);
     if let Some(error) = &session.error {
@@ -312,10 +326,10 @@ fn mail(
         && !composing
         && searching.is_none()
     {
-        main = main.child(sender_strip(k, &sender.address.email, mailbox_name(session)));
+        main = main.child(sender_strip(k, &sender.address.email));
     }
-    if let Some(notice) = &session.notice {
-        main = main.child(notice_strip(k, notice, session.last_move.is_some()));
+    if !composing {
+        main = main.child(action_bar(k, session)).child(el().w_full().h(1.0).fill(k.c.border_muted));
     }
     let content = match (&session.compose, &session.reading) {
         (Some(compose), _) => compose_view(k, compose),
@@ -335,60 +349,91 @@ fn mail(
         .build(k)
 }
 
-/// A borderless button whose action lands at once.
-pub fn ghost(k: &Kit, label: &str, help: &str, key: &str, press: fn(&mut App)) -> El {
-    Button::new(label)
+/// Above a sender's mail: the address, since a newsletter's name rarely says where it comes
+/// from. The way back is in the toolbar.
+fn sender_strip(k: &Kit, email: &str) -> El {
+    row().key("sender-strip").w_full().px(16.0).py(6.0).items_center().child(
+        text(format!("All mail from {email}"))
+            .key("sender-email")
+            .font(k.ty.ui)
+            .color(k.c.text_muted)
+            .truncate()
+            .grow(1.0)
+            .min_w(0.0),
+    )
+}
+
+/// The toolbar's title.
+fn title_text(k: &Kit, title: &str) -> El {
+    text(title).key("mailbox-title").font(k.ty.ui_medium).color(k.c.text_base).truncate().max_w(240.0)
+}
+
+/// "‹ Inbox  Esc": the way back to where you were.
+fn back(k: &Kit, to: &str, key: &str, press: fn(&mut App)) -> El {
+    let label = to.to_string();
+    let cap = Keybind::new(&["Esc"]).variant(KeybindVariant::Ghost).build(k);
+    Button::new(format!("Back to {to}"))
         .variant(ButtonVariant::Ghost)
-        .help(help)
+        .icon(&icons::BACK)
+        .help(format!("Back to {to}"))
+        .shortcut("Esc")
+        .label_with(move |font, ink| {
+            row().gap(6.0).items_center().max_w(220.0).child(text(label).font(font).color(ink).truncate()).child(cap)
+        })
         .on_press_tx(instant(press))
         .build(k)
         .key(key.to_string())
 }
 
-/// Above a sender's mail: the address (a newsletter's name rarely says where it comes from)
-/// and the way back.
-fn sender_strip(k: &Kit, email: &str, mailbox: &str) -> El {
-    let back = Button::new(format!("Back to {mailbox}"))
-        .variant(ButtonVariant::Ghost)
-        .help("Back to the mailbox (Esc)")
-        .on_press_tx(instant(|s: &mut App| s.leave_sender()))
-        .build(k)
-        .key("leave-sender");
-    row()
-        .key("sender-strip")
+/// Sign Out deletes this account's mail from this Mac, so it asks first and says so.
+fn sign_out_dialog(k: &Kit, s: &App, layer: &mut Vec<El>) {
+    let email = match &s.auth {
+        Auth::SignedIn { account, .. } => account.email.clone(),
+        _ => String::new(),
+    };
+    let body = col()
+        .key("sign-out-confirm")
         .w_full()
         .px(16.0)
-        .py(4.0)
-        .gap(8.0)
-        .items_center()
+        .pb(16.0)
+        .gap(16.0)
         .child(
-            text(format!("All mail from {email}"))
-                .key("sender-email")
-                .font(k.ty.ui)
-                .color(k.c.text_muted)
-                .truncate()
-                .grow(1.0)
-                .min_w(0.0),
+            text(format!(
+                "kend will remove {email}'s mail from this Mac and forget its sign-in. Your mail stays in Gmail; \
+                 signing in again downloads it again."
+            ))
+            .font(k.ty.ui)
+            .color(k.c.text_muted)
+            .wrap(),
         )
-        .child(back)
-}
-
-/// A quiet line above the list: "Archived", with Undo when the last move can be undone.
-fn notice_strip(k: &Kit, notice: &str, undo: bool) -> El {
-    let mut strip = row()
-        .key("notice-strip")
-        .w_full()
-        .px(16.0)
-        .py(4.0)
-        .gap(8.0)
-        .items_center()
-        .fill(k.c.layer_01)
-        .radius(k.radius.md)
-        .child(text(notice).key("notice").font(k.ty.ui).color(k.c.text_muted));
-    if undo {
-        strip = strip.child(ghost(k, "Undo", "Undo (Z)", "undo", |s| s.undo()));
-    }
-    strip
+        .child(
+            row()
+                .w_full()
+                .gap(8.0)
+                .child(el().grow(1.0))
+                .child(
+                    Button::new("Cancel")
+                        .variant(ButtonVariant::Ghost)
+                        .shortcut("Esc")
+                        .on_press_tx(instant(|s: &mut App| s.confirm_sign_out = false))
+                        .build(k)
+                        .key("sign-out-cancel"),
+                )
+                .child(
+                    Button::new("Sign Out and Remove Mail")
+                        .variant(ButtonVariant::Danger)
+                        .on_press_tx(instant(|s: &mut App| s.sign_out()))
+                        .build(k)
+                        .key("sign-out-confirmed"),
+                ),
+        );
+    Dialog::new("sign-out", "Sign out of kend?")
+        .open(s.confirm_sign_out)
+        .width(400.0)
+        .fit()
+        .on_close(|s: &mut App| s.confirm_sign_out = false)
+        .child(body)
+        .build(k, layer);
 }
 
 /// A failed sync, in full, until a sync succeeds. kend retries on its own; the button is for
@@ -653,6 +698,47 @@ mod tests {
         lands_in_one_frame(&mut rt, "focusing search", |rt| click(rt, "search"));
         lands_in_one_frame(&mut rt, "typing a search", |rt| key(rt, rune::Key::Text("w".into()), plain));
         lands_in_one_frame(&mut rt, "clearing the search", |rt| key(rt, rune::Key::Escape, plain));
+        lands_in_one_frame(&mut rt, "selecting again", |rt| key(rt, rune::Key::Text("j".into()), plain));
+        lands_in_one_frame(&mut rt, "Star button", |rt| click(rt, "toggle-star"));
+        lands_in_one_frame(&mut rt, "Unread button", |rt| click(rt, "toggle-read"));
+        lands_in_one_frame(&mut rt, "Archive button", |rt| click(rt, "archive"));
+        lands_in_one_frame(&mut rt, "Undo button", |rt| click(rt, "undo"));
+        lands_in_one_frame(&mut rt, "asking to sign out", |rt| click(rt, "sign-out"));
+        lands_in_one_frame(&mut rt, "cancelling sign out", |rt| click(rt, "sign-out-cancel"));
+    }
+
+    /// Archive and Delete are in the same place in the list and in an open message.
+    #[test]
+    fn triage_buttons_stay_put_when_a_message_opens() {
+        let list = render("selecting");
+        let reading = render("reading");
+        for target in ["archive", "delete", "toggle-star", "toggle-read"] {
+            assert_eq!(list.find(target), reading.find(target), "{target} moved");
+        }
+    }
+
+    #[test]
+    fn a_discarded_draft_comes_back_with_undo() {
+        let mut rt = render("compose");
+        click(&mut rt, "discard");
+        rt.frame(0.0);
+        assert!(rt.find("compose").is_none());
+        assert!(rt.find("undo").is_some());
+        key(&mut rt, rune::Key::Text("z".into()), rune::Mods::default());
+        rt.frame(0.0);
+        assert!(rt.find("compose").is_some());
+    }
+
+    #[test]
+    fn sign_out_asks_first() {
+        let mut rt = render("inbox");
+        click(&mut rt, "sign-out");
+        rt.frame(0.0);
+        assert!(rt.find("sign-out-confirm").is_some());
+        assert!(rt.find("mailbox-INBOX").is_some(), "still signed in until confirmed");
+        key(&mut rt, rune::Key::Escape, rune::Mods::default());
+        rt.frame(0.0);
+        assert!(rt.find("sign-out-confirm").is_none());
     }
 
     #[test]

@@ -2,12 +2,12 @@
 
 use rune::{El, Icon, col, row};
 use rune_kit::shell::{Sidebar, SidebarRow, SidebarSection};
-use rune_kit::{Kit, glyphs};
+use rune_kit::{Button, ButtonVariant, Kit, glyphs};
 
 use crate::app::App;
+use crate::app::instant;
 use crate::icons;
 use crate::session::{Session, SyncStatus};
-use crate::view::ghost;
 
 pub struct Mailbox {
     pub id: &'static str,
@@ -61,13 +61,26 @@ pub fn sidebar(k: &Kit, email: &str, session: &Session) -> El {
         );
     }
     let account = SidebarRow::new(email).subtitle(sync_status(session)).height(45.0).select_only();
+    // Sync is routine; Sign Out deletes local mail, so it's quieter and asks first (the "…").
     let controls = row()
         .gap(4.0)
         .px(4.0)
-        .child(ghost(k, "Sync now", "Check for new mail now", "sync-now", |s| s.sync_now()))
-        .child(ghost(k, "Sign out", "Sign out and remove this account's mail from this Mac", "sign-out", |s| {
-            s.sign_out()
-        }));
+        .child(
+            Button::new("Sync Now")
+                .variant(ButtonVariant::GhostMuted)
+                .help("Check for new mail now")
+                .on_press_tx(instant(|s: &mut App| s.sync_now()))
+                .build(k)
+                .key("sync-now"),
+        )
+        .child(
+            Button::new("Sign Out…")
+                .variant(ButtonVariant::GhostMuted)
+                .help("Sign out and remove this account's mail from this Mac")
+                .on_press_tx(instant(|s: &mut App| s.ask_sign_out()))
+                .build(k)
+                .key("sign-out"),
+        );
     let footer = col().w_full().gap(2.0).child(account.build(k).key("account")).child(controls);
     sidebar.footer(footer).build(k)
 }

@@ -25,6 +25,8 @@ pub struct App {
     pub sidebar: PaneState,
     /// Whether the keyboard shortcuts dialog is open (?).
     pub help: bool,
+    /// Whether Sign Out is waiting for confirmation: it deletes this account's local mail.
+    pub confirm_sign_out: bool,
     /// The command palette (⌘K).
     pub palette: Palette,
     client: Option<ClientCredentials>,
@@ -116,6 +118,7 @@ impl App {
             scratch: TextEdit::new(""),
             sidebar: PaneState::new(232.0).range(180.0, 360.0),
             help: false,
+            confirm_sign_out: false,
             palette: Palette::default(),
             client,
             sender,
@@ -360,6 +363,7 @@ impl App {
     pub fn compose_new(&mut self) {
         if let Some(session) = self.session_mut() {
             session.notice = None;
+            session.discarded = None;
             session.compose = Some(Compose::new());
         }
     }
@@ -372,6 +376,7 @@ impl App {
         let compose =
             if forward { Compose::forward(&reading.message, &now) } else { Compose::reply(&reading.message, &now) };
         session.notice = None;
+        session.discarded = None;
         session.compose = Some(compose);
     }
 
@@ -429,6 +434,11 @@ impl App {
 
     pub fn undo(&mut self) {
         let Some(session) = self.session_mut() else { return };
+        if let Some(draft) = session.discarded.take() {
+            session.notice = None;
+            session.compose = Some(draft);
+            return;
+        }
         let Some(undo) = session.undo_move() else { return };
         let (id, Some(gmail)) = (session.id, session.gmail.clone()) else { return };
         self.spawn("undo", move || {
@@ -479,10 +489,19 @@ impl App {
         self.help = !self.help;
     }
 
+    /// Puts the draft aside rather than deleting it, so Undo (Z) brings it back.
     pub fn discard_compose(&mut self) {
         if let Some(session) = self.session_mut() {
-            session.compose = None;
+            session.discarded = session.compose.take();
+            if session.discarded.is_some() {
+                session.notice = Some("Draft discarded".into());
+            }
         }
+    }
+
+    /// The Sign Out button and palette entry: asks first.
+    pub fn ask_sign_out(&mut self) {
+        self.confirm_sign_out = true;
     }
 
     /// The search field, or a scratch edit before a session opens.
@@ -620,6 +639,14 @@ impl App {
             // The palette's field handles its own keys.
             return false;
         }
+        if self.confirm_sign_out {
+            // The dialog's buttons answer; Escape cancels.
+            if matches!(&event.key, Key::Escape) {
+                self.confirm_sign_out = false;
+                return true;
+            }
+            return false;
+        }
         if self.help {
             // The shortcuts dialog is up: only the keys that close it do anything.
             let close = matches!(&event.key, Key::Escape) || matches!(&event.key, Key::Text(t) if t == "?");
@@ -719,6 +746,10 @@ impl App {
                 self.mark(Mark::Read);
                 return true;
             }
+            Key::Text(t) if reading && plain && t == "o" => {
+                self.open_in_browser();
+                return true;
+            }
             Key::Text(t) if plain && t == "z" => {
                 self.undo();
                 return true;
@@ -750,6 +781,7 @@ impl App {
     /// Stops sync, then (off the UI thread) deletes the account's local mail and revokes its
     /// token. The database and Keychain keep nothing of the account.
     pub fn sign_out(&mut self) {
+        self.confirm_sign_out = false;
         let Auth::SignedIn { account, session } = std::mem::replace(&mut self.auth, Auth::SignedOut { error: None })
         else {
             return;

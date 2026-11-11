@@ -180,6 +180,7 @@ pub fn compose_view(k: &Kit, compose: &Compose) -> El {
         .key("send");
     let discard = Button::new("Discard")
         .variant(ButtonVariant::Ghost)
+        .help("Discard this draft. Z brings it back.")
         .disabled(sending)
         .on_press_tx(instant(|s: &mut App| s.discard_compose()))
         .build(k)

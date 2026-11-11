@@ -57,6 +57,9 @@ pub struct Session {
     pub notice: Option<String>,
     /// The last archive or delete, for Undo.
     pub last_move: Option<Undo>,
+    /// The draft last discarded, for Undo. Cleared by the next archive or delete, so Undo
+    /// always takes back the latest thing.
+    pub discarded: Option<Compose>,
     worker: Option<SyncWorker>,
     /// The Gmail client sync uses too, for fetching bodies and marking messages read.
     pub gmail: Option<Arc<Gmail>>,
@@ -193,6 +196,7 @@ impl Session {
             compose: None,
             notice: None,
             last_move: None,
+            discarded: None,
             worker,
             gmail,
         };
@@ -562,6 +566,7 @@ impl Session {
             (Move::Trash, n) => format!("Moved {n} messages to Trash"),
         });
         self.last_move = Some(Undo { messages: moved.clone(), action });
+        self.discarded = None;
         moved
     }
 
@@ -613,6 +618,14 @@ impl Session {
     }
 
     /// S: stars the targets, or unstars them when every one is already starred.
+    /// ⇧U or ⇧I, whichever changes something: Mark Read when every target is unread.
+    pub fn read_mark(&self) -> Mark {
+        let targets = self.targets();
+        let all_unread = !targets.is_empty()
+            && targets.iter().all(|id| self.labels_of(id).is_some_and(|l| l.iter().any(|l| l == "UNREAD")));
+        if all_unread { Mark::Read } else { Mark::Unread }
+    }
+
     pub fn star_mark(&self) -> Mark {
         let targets = self.targets();
         let all_starred = !targets.is_empty()
