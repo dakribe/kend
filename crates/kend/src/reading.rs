@@ -2,9 +2,10 @@
 
 use jiff::Zoned;
 use rune::{El, ScrollSpec, TextStyle, col, el, memo, row, text};
-use rune_kit::{Button, ButtonVariant, Kit, Markdown, Spinner};
+use rune_kit::{Button, ButtonVariant, Kit, Markdown};
 
 use crate::app::App;
+use crate::app::instant;
 use crate::dates;
 use crate::session::{BodyState, Reading};
 
@@ -69,7 +70,7 @@ pub fn reading_view(k: &Kit, dark: bool, reading: &Reading) -> El {
             .key("reading-loading")
             .gap(10.0)
             .items_center()
-            .child(Spinner::new().build(k))
+            .child(crate::view::spinner(k))
             .child(text("Loading message…").font(k.ty.ui).color(k.c.text_muted)),
         BodyState::Failed(err) => col()
             .key("reading-error")
@@ -78,7 +79,7 @@ pub fn reading_view(k: &Kit, dark: bool, reading: &Reading) -> El {
             .child(
                 Button::new("Try again")
                     .variant(ButtonVariant::Ghost)
-                    .on_press(|s: &mut App| s.retry_body())
+                    .on_press_tx(instant(|s: &mut App| s.retry_body()))
                     .build(k)
                     .key("reading-retry"),
             ),

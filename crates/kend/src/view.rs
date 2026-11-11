@@ -3,6 +3,7 @@ use rune::{Align, Cx, El, col, el, row, text};
 use rune_kit::shell::{SidebarToggle, SplitView, Toolbar};
 use rune_kit::{Button, ButtonVariant, ControlSize, Kit, Spinner};
 
+use crate::app::instant;
 use crate::app::{App, Auth};
 use crate::compose::compose_view;
 use crate::message_list::message_list;
@@ -51,8 +52,39 @@ pub const SCENES: &[Scene] = &[
     }),
 ];
 
+/// kend's motion rule: every action lands at once; only loading indicators move. The root
+/// lands layout, entrances and exits instantly (`instant_changes`), and the clock runs at
+/// rune's fastest so colour changes (hover, selection) finish within a frame. Spinners run in
+/// a subtree slowed back to normal speed (`spinner`).
+pub const CLOCK: f32 = 8.0;
+
 pub fn view(s: &App, cx: &mut Cx<App>) -> El {
-    let k = Kit::neutral(cx.system_dark());
+    cx.time_scale(CLOCK);
+    instant_root(build(s, cx))
+}
+
+fn instant_root(root: El) -> El {
+    root.instant_changes()
+}
+
+/// A loading spinner at normal speed under the fast clock.
+pub fn spinner(k: &Kit) -> El {
+    col().time_scale(1.0 / CLOCK).child(Spinner::new().build(k))
+}
+
+/// The neutral kit with its motion springs made instant, so rune-kit's own controls (sidebar
+/// selection, disclosure, panes) follow the same rule.
+pub fn kit(dark: bool) -> Kit {
+    let mut k = Kit::neutral(dark);
+    let instant = rune::Spring::new(0.001, 0.0);
+    k.motion.control = instant;
+    k.motion.overlay = instant;
+    k.motion.disclosure = instant;
+    k
+}
+
+fn build(s: &App, cx: &mut Cx<App>) -> El {
+    let k = kit(cx.system_dark());
     let content = match &s.auth {
         Auth::Loading | Auth::SignedIn { session: None, .. } => el(),
         Auth::NotConfigured => panel(
@@ -64,7 +96,7 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
             let mut p = panel(&k, "Welcome to kend", "Sign in with your Google account to load your mail.").child(
                 Button::new("Sign in with Google")
                     .variant(ButtonVariant::Contrast)
-                    .on_press(|s: &mut App| s.start_sign_in())
+                    .on_press_tx(instant(|s: &mut App| s.start_sign_in()))
                     .build(&k)
                     .key("sign-in"),
             );
@@ -75,11 +107,11 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         }
         Auth::SigningIn { .. } => {
             panel(&k, "Finish signing in in your browser", "kend will continue once you allow access.")
-                .child(Spinner::new().build(&k))
+                .child(spinner(&k))
                 .child(
                     Button::new("Cancel")
                         .variant(ButtonVariant::Ghost)
-                        .on_press(|s: &mut App| s.cancel_sign_in())
+                        .on_press_tx(instant(|s: &mut App| s.cancel_sign_in()))
                         .build(&k)
                         .key("cancel"),
                 )
@@ -110,7 +142,12 @@ fn mail(
     let composing = session.compose.is_some();
     let reading = session.reading.as_ref().filter(|_| !composing);
     let ghost = |label: &str, help: &str, key: &str, press: fn(&mut App)| {
-        Button::new(label).variant(ButtonVariant::Ghost).help(help).on_press(press).build(k).key(key.to_string())
+        Button::new(label)
+            .variant(ButtonVariant::Ghost)
+            .help(help)
+            .on_press_tx(instant(press))
+            .build(k)
+            .key(key.to_string())
     };
     let mut toolbar = Toolbar::new();
     if reading.is_some() {
@@ -176,7 +213,7 @@ fn sync_error(k: &Kit, error: &str) -> El {
         .min_w(0.0);
     let retry = Button::new("Try again")
         .variant(ButtonVariant::Ghost)
-        .on_press(|s: &mut App| s.sync_now())
+        .on_press_tx(instant(|s: &mut App| s.sync_now()))
         .build(k)
         .key("sync-retry");
     row()
@@ -319,6 +356,90 @@ mod tests {
         rt.pointer_up(x, y);
         rt.frame(1.0 / 60.0);
         assert!(rt.find("compose-error").is_some());
+    }
+
+    /// Where everything visible sits and how it looks, by key (or path for unkeyed elements).
+    /// Off-screen rows are left out: the virtual list mounts those a few per frame on purpose.
+    fn pose(rt: &Runtime<App>) -> Vec<String> {
+        let mut pose: Vec<String> = rt
+            .elements()
+            .into_iter()
+            .filter(|e| e.visible[2] > 0.0 && e.visible[3] > 0.0)
+            .map(|e| {
+                let name = e.key.clone().unwrap_or(e.path.clone());
+                let r = e.rect.map(|v| v.round());
+                format!("{name} {r:?} {:?} {:?} {:.2}", e.fill, e.text_color, e.opacity)
+            })
+            .collect();
+        pose.sort();
+        pose
+    }
+
+    /// Runs `act`, draws one frame, and checks ten more frames change nothing.
+    fn lands_in_one_frame(rt: &mut Runtime<App>, what: &str, act: impl FnOnce(&mut Runtime<App>)) {
+        act(rt);
+        rt.frame(1.0 / 60.0);
+        let first = pose(rt);
+        for _ in 0..10 {
+            rt.frame(1.0 / 60.0);
+        }
+        let later = pose(rt);
+        let moved: Vec<_> = later.iter().filter(|p| !first.contains(p)).collect();
+        assert!(moved.is_empty(), "{what} was still animating after one frame: {moved:#?}");
+    }
+
+    fn key(rt: &mut Runtime<App>, key: rune::Key, mods: rune::Mods) {
+        rt.key(rune::KeyEvent { key, mods });
+    }
+
+    fn click(rt: &mut Runtime<App>, target: &str) {
+        let (x, y) = rt.find(target).unwrap_or_else(|| panic!("{target} not found"));
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+    }
+
+    #[test]
+    fn every_action_lands_at_once() {
+        let mut rt = render("large");
+        for _ in 0..30 {
+            rt.frame(1.0 / 60.0);
+        }
+        let plain = rune::Mods::default();
+        for _ in 0..20 {
+            lands_in_one_frame(&mut rt, "J", |rt| key(rt, rune::Key::Text("j".into()), plain));
+        }
+        lands_in_one_frame(&mut rt, "K", |rt| key(rt, rune::Key::Text("k".into()), plain));
+        lands_in_one_frame(&mut rt, "opening a message", |rt| key(rt, rune::Key::Enter, plain));
+        lands_in_one_frame(&mut rt, "Escape", |rt| key(rt, rune::Key::Escape, plain));
+        lands_in_one_frame(&mut rt, "opening a row by click", |rt| click(rt, "sample-0"));
+        lands_in_one_frame(&mut rt, "Back", |rt| click(rt, "back"));
+        lands_in_one_frame(&mut rt, "switching mailbox", |rt| click(rt, "mailbox-Label_2"));
+        let toggle = rune::Mods { shift: true, cmd: true, ..rune::Mods::default() };
+        lands_in_one_frame(&mut rt, "hiding the sidebar", |rt| key(rt, rune::Key::Command('b'), toggle));
+        lands_in_one_frame(&mut rt, "showing the sidebar", |rt| key(rt, rune::Key::Command('b'), toggle));
+        lands_in_one_frame(&mut rt, "back to the inbox", |rt| click(rt, "mailbox-INBOX"));
+        lands_in_one_frame(&mut rt, "New Message", |rt| click(rt, "new-message"));
+        lands_in_one_frame(&mut rt, "Discard", |rt| click(rt, "discard"));
+        lands_in_one_frame(&mut rt, "opening to reply", |rt| click(rt, "sample-0"));
+        lands_in_one_frame(&mut rt, "Reply", |rt| click(rt, "reply"));
+        lands_in_one_frame(&mut rt, "discarding the reply", |rt| click(rt, "discard"));
+    }
+
+    #[test]
+    fn loading_still_spins_at_normal_speed() {
+        let mut rt = render("reading-loading");
+        let mut poses = Vec::new();
+        // A quarter second, sampled every 1/60 s.
+        for _ in 0..15 {
+            rt.frame(1.0 / 60.0);
+            poses.push(pose(&rt));
+        }
+        let changes = poses.windows(2).filter(|w| w[0] != w[1]).count();
+        assert!(changes > 0, "the spinner moves while a message loads");
+        // At 8× speed it would cycle several times in this window; at 1× the frames keep
+        // changing smoothly instead of repeating a short loop.
+        let distinct: std::collections::HashSet<_> = poses.iter().collect();
+        assert!(distinct.len() > 4, "only {} distinct frames", distinct.len());
     }
 
     #[test]

@@ -395,6 +395,8 @@ impl App {
     /// through messages, Return opens one and Escape goes back to the list. While a message
     /// is open, J/K open the next and previous one.
     pub fn on_key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
+        // Keys land at once: no glide when the list follows the selection.
+        tx.instant();
         if shell::is_sidebar_toggle(event) {
             self.sidebar.toggle();
             return true;
@@ -470,6 +472,15 @@ impl App {
         if let Err(err) = spawned {
             let _ = self.sender.send(Event::Loaded(Err(Error::Io(err))));
         }
+    }
+}
+
+/// A click handler that lands its change at once, as every kend action does: no layout
+/// springs, fades or colour easing (see `view::CLOCK`).
+pub fn instant(f: impl Fn(&mut App) + 'static) -> impl Fn(&mut App, &mut Tx) + 'static {
+    move |s, tx| {
+        tx.instant();
+        f(s)
     }
 }
 

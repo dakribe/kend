@@ -8,6 +8,7 @@ use rune::{El, KeyEvent, ScrollSpec, TextEdit, Tx, col, el, row, text};
 use rune_kit::{Button, ButtonVariant, Kit, TextArea, TextInput};
 
 use crate::app::App;
+use crate::app::instant;
 use crate::dates;
 
 pub enum ComposeKind {
@@ -174,13 +175,13 @@ pub fn compose_view(k: &Kit, compose: &Compose) -> El {
         .variant(ButtonVariant::Contrast)
         .help("Send (⌘Return)")
         .disabled(sending)
-        .on_press(|s: &mut App| s.send())
+        .on_press_tx(instant(|s: &mut App| s.send()))
         .build(k)
         .key("send");
     let discard = Button::new("Discard")
         .variant(ButtonVariant::Ghost)
         .disabled(sending)
-        .on_press(|s: &mut App| s.discard_compose())
+        .on_press_tx(instant(|s: &mut App| s.discard_compose()))
         .build(k)
         .key("discard");
     let header = row()

@@ -52,7 +52,10 @@ pub fn sidebar(k: &Kit, email: &str, session: &Session) -> El {
             SidebarSection::new("Labels")
                 .key("labels")
                 .collapsed(session.labels_collapsed)
-                .on_toggle(|s: &mut App, _| s.toggle_labels())
+                .on_toggle(|s: &mut App, tx| {
+                    tx.instant();
+                    s.toggle_labels()
+                })
                 .rows(rows),
         );
     }
@@ -63,7 +66,10 @@ pub fn sidebar(k: &Kit, email: &str, session: &Session) -> El {
 fn finish(row: SidebarRow, id: &str, session: &Session, k: &Kit) -> El {
     let target = id.to_string();
     row.selected(session.mailbox == id)
-        .on_select(move |s: &mut App, _| s.select_mailbox(&target))
+        .on_select(move |s: &mut App, tx| {
+            tx.instant();
+            s.select_mailbox(&target)
+        })
         .build(k)
         .key(format!("mailbox-{id}"))
 }

@@ -10,6 +10,7 @@ use rune::{Align, El, GrowthSpec, ScrollSpec, col, el, memo, row, text};
 use rune_kit::Kit;
 
 use crate::app::App;
+use crate::app::instant;
 use crate::dates;
 use crate::session::{Session, SyncStatus};
 use crate::view::message;
@@ -78,7 +79,7 @@ fn message_row(k: &Kit, m: &MessageSummary, selected: bool, date: &str) -> El {
         .items_center()
         .radius(k.radius.md)
         .hover(k.c.hover)
-        .on_press(move |s: &mut App| s.open_message(&id))
+        .on_press_tx(instant(move |s: &mut App| s.open_message(&id)))
         .child(dot)
         .child(from)
         .child(line)

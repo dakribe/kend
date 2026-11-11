@@ -28,6 +28,9 @@ everything you've already loaded works offline. The UI is native and GPU-rendere
 - **Compose, reply and forward**, with replies kept in their Gmail conversation.
 - **Keyboard first**: J/K or arrows to move, Return to open, Esc to go back, R to reply,
   F to forward, ⌘N for a new message, ⌘Return to send.
+- **Instant actions.** Nothing animates except loading indicators: opening a message, moving
+  the selection, switching mailboxes and toggling the sidebar all land in the frame they
+  happen, and a test checks it for each action.
 - **Light and dark** themes that follow the system.
 
 ## Performance
@@ -122,7 +125,7 @@ Requires Rust. The version is pinned in `rust-toolchain.toml`.
 
 ```sh
 cargo run -p kend                      # open the app
-cargo test                             # 103 tests across the workspace
+cargo test                             # 105 tests across the workspace
 cargo run --release -p kend-store --example bench
 
 # Render a screen without a window, from built-in sample data (no account needed)
