@@ -5,7 +5,7 @@ pub struct AccountId(pub(crate) i64);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct MessageId(pub(crate) i64);
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Address {
     pub name: String,
     pub email: String,
@@ -57,7 +57,7 @@ pub struct NewMessage {
 }
 
 /// One row of a mailbox list: everything the list shows, nothing it doesn't.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MessageSummary {
     pub id: MessageId,
     pub gmail_id: String,

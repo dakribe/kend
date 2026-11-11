@@ -21,6 +21,9 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+# Dependencies (Rune, wgpu, the text stack) build optimized even in debug builds, so `cargo run`
+# scrolls smoothly while kend's own code stays quick to compile and debug.
+opt-level = 2
 
 [profile.release]
 codegen-units = 16

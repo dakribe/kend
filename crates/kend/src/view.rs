@@ -1,10 +1,11 @@
 use kend_gmail::{Account, CancelToken};
-use kend_store::{Address, Label, LabelKind, MessageSummary, NewMessage, Store};
-use rune::{Align, Cx, El, ScrollSpec, col, el, row, text};
+use rune::{Align, Cx, El, col, el, row, text};
 use rune_kit::shell::{SidebarToggle, SplitView, Toolbar};
 use rune_kit::{Button, ButtonVariant, ControlSize, Kit, Spinner};
 
 use crate::app::{App, Auth};
+use crate::message_list::message_list;
+use crate::samples::{self, sample_inbox};
 use crate::session::{Session, SyncStatus};
 use crate::sidebar::{mailbox_name, sidebar, sync_status};
 
@@ -18,6 +19,7 @@ pub const SCENES: &[Scene] = &[
     ("signing-in", |s| s.auth = Auth::SigningIn { attempt: 1, cancel: CancelToken::default() }),
     ("inbox", |s| s.auth = sample_inbox(SyncStatus::Synced)),
     ("syncing", |s| s.auth = sample_inbox(SyncStatus::Syncing { fetched: 200 })),
+    ("large", |s| s.auth = samples::large_inbox(5_000)),
 ];
 
 pub fn view(s: &App, cx: &mut Cx<App>) -> El {
@@ -55,14 +57,22 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         }
         Auth::SignedIn { account, session: Some(session) } => {
             let inset = cx.titlebar_inset();
-            return mail(s, &k, inset, cx.is_reduced_motion(), account, session);
+            return mail(s, &k, cx.system_dark(), inset, cx.is_reduced_motion(), account, session);
         }
     };
     col().w_full().h_full().center().fill(k.c.bg_base).child(content)
 }
 
 /// The signed-in window: the sidebar beside the selected mailbox's messages.
-fn mail(s: &App, k: &Kit, titlebar_inset: f32, reduced_motion: bool, account: &Account, session: &Session) -> El {
+fn mail(
+    s: &App,
+    k: &Kit,
+    dark: bool,
+    titlebar_inset: f32,
+    reduced_motion: bool,
+    account: &Account,
+    session: &Session,
+) -> El {
     let title = text(mailbox_name(session)).key("mailbox-title").font(k.ty.ui_medium).color(k.c.text_base);
     let counts = text(counts(session.total, session.unread_in(&session.mailbox)))
         .key("counts")
@@ -86,7 +96,7 @@ fn mail(s: &App, k: &Kit, titlebar_inset: f32, reduced_motion: bool, account: &A
                 .build(k)
                 .key("sign-out"),
         );
-    SplitView::new(message_list(k, session))
+    SplitView::new(message_list(k, dark, session))
         .sidebar(&s.sidebar, |s: &mut App| &mut s.sidebar, sidebar(k, &account.email, session))
         .toolbar(toolbar)
         .titlebar_inset(titlebar_inset)
@@ -96,32 +106,6 @@ fn mail(s: &App, k: &Kit, titlebar_inset: f32, reduced_motion: bool, account: &A
         .sidebar_toggle(SidebarToggle::new().size(ControlSize::Large).past_lights(16.0).edge(18.0).gap(4.0).in_header())
         .reduced_motion(reduced_motion)
         .build(k)
-}
-
-fn message_list(k: &Kit, session: &Session) -> El {
-    if session.rows.is_empty() {
-        let note = match session.sync {
-            SyncStatus::Syncing { .. } => "Loading your mail…",
-            _ => "Nothing here.",
-        };
-        return col().key("messages").w_full().h_full().center().child(message(k, note).key("empty"));
-    }
-    let rows = col().w_full().children(session.rows.iter().map(|m| message_row(k, m)));
-    col().key("messages").w_full().h_full().min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(rows)
-}
-
-fn message_row(k: &Kit, m: &MessageSummary) -> El {
-    let (weight, ink) = if m.unread { (k.ty.ui_medium, k.c.text_base) } else { (k.ty.ui, k.c.text_muted) };
-    let dot = el().size(8.0, 8.0).radius(4.0).fill(if m.unread { k.c.text_accent } else { k.c.bg_base });
-    let from = text(m.from.display()).font(weight).color(ink).truncate().w(180.0);
-    let subject = if m.subject.is_empty() { "(no subject)" } else { &m.subject };
-    let line = row()
-        .grow(1.0)
-        .min_w(0.0)
-        .gap(8.0)
-        .child(text(subject).font(weight).color(ink).truncate().shrink())
-        .child(text(&m.snippet).font(k.ty.ui).color(k.c.text_faint).truncate().grow(1.0).min_w(0.0));
-    row().key(m.gmail_id.clone()).w_full().h(40.0).px(16.0).gap(12.0).items_center().child(dot).child(from).child(line)
 }
 
 /// "1,234 messages · 213 unread".
@@ -150,70 +134,8 @@ fn panel(k: &Kit, title: &str, body: &str) -> El {
     col().w(360.0).center().gap(12.0).child(title).child(message(k, body).key("body"))
 }
 
-fn message(k: &Kit, s: &str) -> El {
+pub fn message(k: &Kit, s: &str) -> El {
     text(s).font(k.ty.ui).color(k.c.text_muted).wrap().align(Align::Center).w_full()
-}
-
-/// A signed-in session over an in-memory database with a few messages, for snapshots.
-fn sample_inbox(sync: SyncStatus) -> Auth {
-    let samples = [
-        (
-            "Ana Lima",
-            "ana@example.com",
-            "Dinner on Friday?",
-            "We're thinking 7pm at the usual place, let me know",
-            true,
-        ),
-        (
-            "GitHub",
-            "noreply@github.com",
-            "[kend] New issue: Search is too fast",
-            "Somebody opened a new issue in your repository",
-            true,
-        ),
-        (
-            "Bo Chen",
-            "bo@example.com",
-            "Re: Quarterly report",
-            "Thanks, the numbers look right to me. One question about",
-            false,
-        ),
-    ];
-    let messages: Vec<NewMessage> = samples
-        .iter()
-        .enumerate()
-        .map(|(i, (name, email, subject, snippet, unread))| NewMessage {
-            gmail_id: format!("sample-{i}"),
-            from: Address::new(*name, *email),
-            subject: (*subject).into(),
-            snippet: (*snippet).into(),
-            received_at: 1_000 - i as i64,
-            label_ids: if *unread {
-                vec!["INBOX".into(), "UNREAD".into(), "Label_2".into()]
-            } else {
-                vec!["INBOX".into()]
-            },
-            ..NewMessage::default()
-        })
-        .collect();
-    let account = Account::new("you@gmail.com".into(), String::new());
-    let session = Store::open_in_memory()
-        .and_then(|mut store| {
-            let id = store.upsert_account(&account.email)?;
-            let label = |id: &str, name: &str| Label { id: id.into(), name: name.into(), kind: LabelKind::User };
-            store.replace_labels(
-                id,
-                &[label("Label_1", "Receipts"), label("Label_2", "Work"), label("Label_3", "Work/Clients")],
-            )?;
-            store.upsert_messages(id, &messages)?;
-            Session::open(1, store, &account.email, None)
-        })
-        .ok()
-        .map(|mut session| {
-            session.sync = sync;
-            Box::new(session)
-        });
-    Auth::SignedIn { account, session }
 }
 
 #[cfg(test)]

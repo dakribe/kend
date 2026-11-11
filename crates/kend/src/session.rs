@@ -7,8 +7,8 @@ use kend_store::{AccountId, Label, LabelKind, MessageSummary, Store};
 
 use crate::sync_worker::{SyncUpdate, SyncWorker};
 
-/// How many rows the message list shows.
-const PAGE: usize = 100;
+/// Rows read from the database at a time. The list loads the next page as you near the end.
+const PAGE: usize = 200;
 
 pub struct Session {
     pub id: u64,
@@ -16,7 +16,12 @@ pub struct Session {
     account: AccountId,
     /// The selected mailbox's Gmail label id.
     pub mailbox: String,
+    /// The mailbox's newest rows, as far down as the list has scrolled.
     pub rows: Vec<MessageSummary>,
+    /// Bumped whenever `rows` is replaced rather than extended, so the list re-reads its keys.
+    pub rows_version: u64,
+    /// The selected message's Gmail id.
+    pub selected: Option<String>,
     /// Messages in the selected mailbox.
     pub total: u64,
     /// Unread messages per label id.
@@ -44,6 +49,8 @@ impl Session {
             account,
             mailbox: "INBOX".into(),
             rows: Vec::new(),
+            rows_version: 0,
+            selected: None,
             total: 0,
             unread: HashMap::new(),
             labels: Vec::new(),
@@ -62,14 +69,19 @@ impl Session {
     pub fn select(&mut self, mailbox: &str) {
         if self.mailbox != mailbox {
             self.mailbox = mailbox.to_string();
+            self.rows.clear();
+            self.selected = None;
             self.reload();
         }
     }
 
-    /// Re-reads the selected mailbox, the unread counts and the labels. All local, ~1 ms.
+    /// Re-reads the selected mailbox (as many rows as are loaded), the unread counts and the
+    /// labels. All local: about a millisecond for a few hundred rows.
     pub fn reload(&mut self) {
-        if let Ok(rows) = self.store.list(self.account, &self.mailbox, None, PAGE) {
+        let loaded = self.rows.len().max(PAGE);
+        if let Ok(rows) = self.store.list(self.account, &self.mailbox, None, loaded) {
             self.rows = rows;
+            self.rows_version += 1;
         }
         if let Ok(total) = self.store.count(self.account, &self.mailbox) {
             self.total = total;
@@ -82,6 +94,37 @@ impl Session {
             labels.sort_by_key(|l| l.name.to_lowercase());
             self.labels = labels;
         }
+    }
+
+    /// Loads the next page when the list shows rows within half a page of the end. True when
+    /// rows were added.
+    pub fn load_more(&mut self, visible_end: usize) -> bool {
+        let loaded = self.rows.len();
+        if visible_end + PAGE / 2 < loaded || loaded as u64 >= self.total {
+            return false;
+        }
+        let after = self.rows.last().map(MessageSummary::cursor);
+        match self.store.list(self.account, &self.mailbox, after, PAGE) {
+            Ok(more) if !more.is_empty() => {
+                self.rows.extend(more);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Moves the selection `delta` rows (down when positive), starting at the top when nothing
+    /// is selected. Returns the newly selected message's id.
+    pub fn move_selection(&mut self, delta: isize) -> Option<&str> {
+        let current = self.selected.as_ref().and_then(|id| self.rows.iter().position(|m| &m.gmail_id == id));
+        let next = match current {
+            None => 0,
+            Some(i) => i.saturating_add_signed(delta),
+        };
+        self.load_more(next);
+        let next = next.min(self.rows.len().checked_sub(1)?);
+        self.selected = Some(self.rows[next].gmail_id.clone());
+        self.selected.as_deref()
     }
 
     /// Applies a worker update. Returns true when Google signed the account out.

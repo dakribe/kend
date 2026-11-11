@@ -1,7 +1,10 @@
 //! kend: a fast local email client.
 
 mod app;
+mod dates;
 mod icons;
+mod message_list;
+mod samples;
 mod session;
 mod sidebar;
 mod sync_worker;

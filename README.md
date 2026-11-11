@@ -49,6 +49,25 @@ Measured on 100,000 messages (`cargo run --release -p kend-store --example bench
 | Search for a word in 40% of all mail (worst case) | 26 ms |
 | Insert | ~40,000 messages/s |
 
+## Scrolling
+
+The message list builds only the rows near the viewport (Rune's `virtual_rows`), memoises each
+row on what it shows, and reads the next 200 rows from SQLite as the list nears its end. Frame
+cost stays flat however deep you scroll.
+
+Measured headless on a 5,000-message inbox while scrolling 1,000+ rows deep
+(`target/release/kend --scene large --script crates/kend/scripts/scroll.json --out /tmp/frames --every 1000`):
+
+| | Before (all rows built, capped at 100) | After |
+|---|---|---|
+| Debug build, frame CPU p50 / p95 | 3.6 / 4.2 ms | 1.6 / 3.8 ms |
+| Debug build, first frame | 108 ms | 14 ms |
+| Release build, frame CPU p50 / p95 | 1.7 / 2.9 ms | 1.8 / 2.3 ms |
+| Rows reachable | 100 | the whole mailbox |
+
+Debug builds compile dependencies with optimizations (`[profile.dev.package."*"]`), so
+`cargo run` stays smooth while kend's own code builds quickly.
+
 ## Build and run
 
 Requires Rust (the version is pinned in `rust-toolchain.toml`).

@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+jiff = "0.2.42"
 kend-gmail.workspace = true
 kend-store.workspace = true
 kend-sync.workspace = true

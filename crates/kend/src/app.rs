@@ -6,7 +6,7 @@ use std::thread;
 
 use kend_gmail::{Account, CancelToken, ClientCredentials, Error};
 use kend_store::Store;
-use rune::{KeyEvent, Tx, Waker};
+use rune::{Key, KeyEvent, Tx, Waker};
 use rune_kit::PaneState;
 use rune_kit::shell;
 
@@ -183,6 +183,13 @@ impl App {
         }
     }
 
+    pub fn session(&self) -> Option<&Session> {
+        match &self.auth {
+            Auth::SignedIn { session: Some(session), .. } => Some(session),
+            _ => None,
+        }
+    }
+
     fn session_mut(&mut self) -> Option<&mut Session> {
         match &mut self.auth {
             Auth::SignedIn { session: Some(session), .. } => Some(session),
@@ -190,13 +197,37 @@ impl App {
         }
     }
 
-    /// Window-wide shortcuts: ⇧⌘B shows and hides the sidebar.
-    pub fn on_key(&mut self, event: &KeyEvent, _tx: &mut Tx) -> bool {
+    /// The list reached `visible_end`: load the next page if it's close. True when rows were added.
+    pub fn load_more(&mut self, visible_end: usize) -> bool {
+        self.session_mut().is_some_and(|session| session.load_more(visible_end))
+    }
+
+    pub fn select_message(&mut self, gmail_id: &str) {
+        if let Some(session) = self.session_mut() {
+            session.selected = Some(gmail_id.to_string());
+        }
+    }
+
+    /// Window-wide shortcuts: ⇧⌘B shows and hides the sidebar; J/K and the arrows move
+    /// through messages.
+    pub fn on_key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
         if shell::is_sidebar_toggle(event) {
             self.sidebar.toggle();
             return true;
         }
-        false
+        let plain = !(event.mods.cmd || event.mods.ctrl || event.mods.alt);
+        let delta = match &event.key {
+            Key::Down => 1,
+            Key::Up => -1,
+            Key::Text(t) if plain && t == "j" => 1,
+            Key::Text(t) if plain && t == "k" => -1,
+            _ => return false,
+        };
+        let Some(selected) = self.session_mut().and_then(|session| session.move_selection(delta)) else {
+            return false;
+        };
+        tx.scroll_into_view(selected.to_string());
+        true
     }
 
     /// Stops sync, then (off the UI thread) deletes the account's local mail and revokes its
@@ -316,5 +347,57 @@ mod tests {
         signed_in(&mut app, 7);
         assert!(app.apply(Event::Sync { session: 7, update: SyncUpdate::SignedOut }));
         assert!(matches!(&app.auth, Auth::SignedOut { error: Some(e) } if e.contains("sign in again")));
+    }
+
+    fn many(count: usize) -> Vec<NewMessage> {
+        (0..count)
+            .map(|i| NewMessage {
+                gmail_id: format!("m{i:04}"),
+                received_at: -(i as i64),
+                label_ids: vec!["INBOX".into()],
+                ..NewMessage::default()
+            })
+            .collect()
+    }
+
+    fn session_with(count: usize) -> Session {
+        let mut store = Store::open_in_memory().unwrap();
+        let id = store.upsert_account("me@example.com").unwrap();
+        store.upsert_messages(id, &many(count)).unwrap();
+        Session::open(1, store, "me@example.com", None).unwrap()
+    }
+
+    #[test]
+    fn the_list_loads_pages_as_it_nears_the_end() {
+        let mut session = session_with(450);
+        assert_eq!(session.rows.len(), 200);
+        assert!(!session.load_more(20), "far from the end: nothing to load");
+        assert!(session.load_more(150));
+        assert_eq!(session.rows.len(), 400);
+        assert!(session.load_more(399));
+        assert_eq!(session.rows.len(), 450);
+        assert!(!session.load_more(449), "the whole mailbox is loaded");
+        assert_eq!(session.rows.last().map(|m| m.gmail_id.as_str()), Some("m0449"));
+    }
+
+    #[test]
+    fn a_sync_reload_keeps_every_loaded_row() {
+        let mut session = session_with(450);
+        session.load_more(199);
+        let version = session.rows_version;
+        session.reload();
+        assert_eq!(session.rows.len(), 400);
+        assert!(session.rows_version > version);
+    }
+
+    #[test]
+    fn keys_move_the_selection_and_load_more_at_the_end() {
+        let mut session = session_with(450);
+        assert_eq!(session.move_selection(1), Some("m0000"), "the first press selects the top row");
+        assert_eq!(session.move_selection(1), Some("m0001"));
+        assert_eq!(session.move_selection(-5), Some("m0000"), "stops at the top");
+        session.selected = Some("m0199".into());
+        assert_eq!(session.move_selection(1), Some("m0200"), "past the loaded rows");
+        assert_eq!(session.rows.len(), 400);
     }
 }

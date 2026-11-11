@@ -1,0 +1,9 @@
+[
+  {"t": 0.3, "type": "scroll", "key": "messages", "dy": -1500, "dur": 0.8},
+  {"t": 1.2, "type": "scroll", "key": "messages", "dy": -1500, "dur": 0.8},
+  {"t": 2.1, "type": "scroll", "key": "messages", "dy": 900, "dur": 0.6},
+  {"t": 2.8, "type": "scroll", "key": "messages", "dy": -6000, "dur": 1.0},
+  {"t": 3.9, "type": "scroll", "key": "messages", "dy": -12000, "dur": 1.2},
+  {"t": 5.2, "type": "scroll", "key": "messages", "dy": -24000, "dur": 1.5},
+  {"t": 7.0, "type": "mark", "name": "end"}
+]
