@@ -1,7 +1,7 @@
 use kend_gmail::{Account, CancelToken};
 use rune::{Align, Cx, El, col, el, row, text};
 use rune_kit::shell::{SidebarToggle, SplitView, Toolbar};
-use rune_kit::{Button, ButtonVariant, ControlSize, Kit, Spinner, TextInput};
+use rune_kit::{Button, ButtonVariant, ControlSize, Dialog, Keybind, Kit, Spinner, TextInput};
 
 use crate::app::instant;
 use crate::app::{App, Auth};
@@ -53,6 +53,17 @@ pub const SCENES: &[Scene] = &[
         s.open_message("sample-0");
         s.reply(false);
     }),
+    ("selecting", |s| {
+        s.auth = sample_inbox(SyncStatus::Synced);
+        if let Auth::SignedIn { session: Some(session), .. } = &mut s.auth {
+            session.toggle_checked("sample-0");
+            session.check_range("sample-2");
+        }
+    }),
+    ("help", |s| {
+        s.auth = sample_inbox(SyncStatus::Synced);
+        s.help = true;
+    }),
     ("reading-loading", |s| {
         s.auth = sample_inbox(SyncStatus::Synced);
         s.open_message("sample-2");
@@ -67,7 +78,86 @@ pub const CLOCK: f32 = 8.0;
 
 pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     cx.time_scale(CLOCK);
-    instant_root(build(s, cx))
+    let k = kit(cx.system_dark());
+    let mut layer = Vec::new();
+    shortcuts(&k, s.help, &mut layer);
+    instant_root(rune_kit::root(build(s, cx), layer))
+}
+
+/// A shortcut's keys (any of them works) and what it does.
+type Shortcut = (&'static [&'static str], &'static str);
+
+/// Every shortcut, grouped as the help dialog lists them.
+const SHORTCUTS: &[(&str, &[Shortcut])] = &[
+    (
+        "Moving around",
+        &[
+            (&["J", "↓"], "Next message"),
+            (&["K", "↑"], "Previous message"),
+            (&["Return"], "Open message"),
+            (&["Esc"], "Back to the list, or clear the selection"),
+            (&["⌘F", "/"], "Search"),
+            (&["⇧⌘B"], "Show or hide the sidebar"),
+        ],
+    ),
+    (
+        "Selecting",
+        &[
+            (&["X"], "Select or deselect message"),
+            (&["⇧J", "⇧↓"], "Extend selection down"),
+            (&["⇧K", "⇧↑"], "Extend selection up"),
+            (&["⌘A"], "Select all"),
+            (&["⌘ click"], "Select or deselect message"),
+            (&["⇧ click"], "Select a range"),
+        ],
+    ),
+    (
+        "Actions",
+        &[
+            (&["E"], "Archive"),
+            (&["#", "Delete"], "Move to Trash"),
+            (&["Z"], "Undo"),
+            (&["R"], "Reply"),
+            (&["F"], "Forward"),
+            (&["⌘N"], "New message"),
+            (&["⌘Return"], "Send"),
+            (&["?"], "Show these shortcuts"),
+        ],
+    ),
+];
+
+/// The keyboard shortcuts dialog (?).
+fn shortcuts(k: &Kit, open: bool, layer: &mut Vec<El>) {
+    let mut body = col().key("shortcuts").w_full().px(16.0).pb(16.0).gap(16.0);
+    for (group, keys) in SHORTCUTS {
+        let mut section =
+            col().key(*group).w_full().gap(6.0).child(text(*group).font(k.ty.ui_medium).color(k.c.text_base));
+        for (keys, what) in *keys {
+            let mut caps = row().gap(6.0).items_center().w(120.0);
+            for (i, key) in keys.iter().enumerate() {
+                if i > 0 {
+                    caps = caps.child(text("or").font(k.ty.small).color(k.c.text_faint));
+                }
+                caps = caps.child(Keybind::new(&[*key]).build(k));
+            }
+            section = section.child(
+                row()
+                    .w_full()
+                    .gap(12.0)
+                    .items_center()
+                    .child(caps)
+                    .child(text(*what).font(k.ty.ui).color(k.c.text_muted)),
+            );
+        }
+        body = body.child(section);
+    }
+    Dialog::new("help", "Keyboard shortcuts")
+        .open(open)
+        .width(440.0)
+        .fit()
+        .on_close(|s: &mut App| s.help = false)
+        .child(body)
+        .build(k, layer);
 }
 
 fn instant_root(root: El) -> El {
@@ -155,6 +245,17 @@ fn mail(
     .color(k.c.text_muted);
     let composing = session.compose.is_some();
     let reading = session.reading.is_some();
+    let checked = session.checked.len();
+    // While messages are checked, their count and Clear take the place of the mailbox counts.
+    let counts = if !reading && !composing && checked > 0 {
+        row()
+            .gap(4.0)
+            .items_center()
+            .child(text(format!("{checked} selected")).key("checked-count").font(k.ty.ui).color(k.c.text_muted))
+            .child(ghost(k, "Clear", "Clear selection (Esc)", "clear-checked", |s| s.clear_checked()))
+    } else {
+        counts
+    };
     // The toolbar holds where you are, search and New Message. Message actions live in the
     // open message's own bar, and account actions at the foot of the sidebar.
     let mut toolbar = Toolbar::new().leading(row().gap(10.0).items_center().child(title).child(counts));
@@ -174,12 +275,14 @@ fn mail(
             .build(k)
             .key("search");
         toolbar = toolbar.center(search);
-        if !reading && session.target().is_some() {
+        if !reading && (checked > 0 || session.selected.is_some()) {
             toolbar = toolbar
                 .trailing(ghost(k, "Archive", "Archive (E)", "archive", |s| s.move_message(Move::Archive)))
                 .trailing(ghost(k, "Delete", "Move to Trash (#)", "delete", |s| s.move_message(Move::Trash)));
         }
-        toolbar = toolbar.trailing(ghost(k, "New Message", "New message (⌘N)", "new-message", |s| s.compose_new()));
+        toolbar = toolbar
+            .trailing(ghost(k, "New Message", "New message (⌘N)", "new-message", |s| s.compose_new()))
+            .trailing(ghost(k, "?", "Keyboard shortcuts (?)", "help", |s| s.toggle_help()));
     }
     let mut main = col().w_full().h_full().min_h(0.0);
     if let Some(error) = &session.error {
@@ -473,6 +576,12 @@ mod tests {
         lands_in_one_frame(&mut rt, "deleting", |rt| key(rt, rune::Key::Text("#".into()), plain));
         lands_in_one_frame(&mut rt, "undoing", |rt| key(rt, rune::Key::Text("z".into()), plain));
         lands_in_one_frame(&mut rt, "Delete button", |rt| click(rt, "delete"));
+        lands_in_one_frame(&mut rt, "checking a row", |rt| key(rt, rune::Key::Text("x".into()), plain));
+        lands_in_one_frame(&mut rt, "extending the selection", |rt| key(rt, rune::Key::Text("J".into()), plain));
+        lands_in_one_frame(&mut rt, "clicking a checkbox", |rt| click(rt, "check"));
+        lands_in_one_frame(&mut rt, "clearing the selection", |rt| click(rt, "clear-checked"));
+        lands_in_one_frame(&mut rt, "opening help", |rt| key(rt, rune::Key::Text("?".into()), plain));
+        lands_in_one_frame(&mut rt, "closing help", |rt| key(rt, rune::Key::Escape, plain));
         lands_in_one_frame(&mut rt, "focusing search", |rt| click(rt, "search"));
         lands_in_one_frame(&mut rt, "typing a search", |rt| key(rt, rune::Key::Text("w".into()), plain));
         lands_in_one_frame(&mut rt, "clearing the search", |rt| key(rt, rune::Key::Escape, plain));
@@ -550,6 +659,31 @@ mod tests {
         key(&mut rt, rune::Key::Text("z".into()), plain);
         rt.frame(1.0 / 60.0);
         assert!(rt.find("sample-0").is_some(), "back after undo");
+    }
+
+    #[test]
+    fn the_help_dialog_lists_shortcuts() {
+        let mut rt = render("inbox");
+        assert!(rt.find("help-dialog").is_none());
+        click(&mut rt, "help");
+        rt.frame(1.0 / 60.0);
+        assert!(rt.find("help-dialog").is_some());
+        assert!(rt.find("Selecting").is_some());
+        key(&mut rt, rune::Key::Escape, rune::Mods::default());
+        rt.frame(1.0 / 60.0);
+        assert!(rt.find("help-dialog").is_none());
+    }
+
+    #[test]
+    fn checking_rows_shows_the_bulk_actions() {
+        let mut rt = render("inbox");
+        click(&mut rt, "check");
+        rt.frame(1.0 / 60.0);
+        let count = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("checked-count")).and_then(|e| e.text);
+        assert_eq!(count.as_deref(), Some("1 selected"));
+        assert!(rt.find("archive").is_some() && rt.find("delete").is_some());
+        let Auth::SignedIn { session: Some(session), .. } = &rt.state.auth else { panic!() };
+        assert!(session.reading.is_none(), "the checkbox doesn't open the message");
     }
 
     #[test]

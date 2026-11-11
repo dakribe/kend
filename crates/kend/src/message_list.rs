@@ -7,10 +7,9 @@ use std::borrow::Cow;
 use jiff::Zoned;
 use kend_store::MessageSummary;
 use rune::{Align, El, GrowthSpec, ScrollSpec, col, el, memo, row, text};
-use rune_kit::Kit;
+use rune_kit::{Checkbox, Kit};
 
 use crate::app::App;
-use crate::app::instant;
 use crate::dates;
 use crate::session::{Session, SyncStatus};
 use crate::view::message;
@@ -42,9 +41,12 @@ pub fn message_list(k: &Kit, dark: bool, session: &Session) -> El {
             move |s: &App, i| {
                 let Some((session, m)) = s.session().and_then(|x| Some((x, x.visible().get(i)?))) else { return el() };
                 let selected = session.selected.as_deref() == Some(m.gmail_id.as_str());
+                let checked = session.checked.contains(&m.gmail_id);
                 let date = dates::label(m.received_at, &now);
                 // Rebuilt only when what the row shows changes.
-                memo(m.gmail_id.as_str(), (m, selected, &date, dark), || message_row(&kit, m, selected, &date))
+                memo(m.gmail_id.as_str(), (m, selected, checked, &date, dark), || {
+                    message_row(&kit, m, selected, checked, &date)
+                })
             },
         )
         .virtual_rows_version(session.rows_version)
@@ -52,7 +54,9 @@ pub fn message_list(k: &Kit, dark: bool, session: &Session) -> El {
     col().key("messages").w_full().h_full().min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(rows)
 }
 
-fn message_row(k: &Kit, m: &MessageSummary, selected: bool, date: &str) -> El {
+/// One message. ⌘-click checks it, Shift-click checks a range, a plain click opens it; the
+/// checkbox checks it without opening.
+fn message_row(k: &Kit, m: &MessageSummary, selected: bool, checked: bool, date: &str) -> El {
     let (weight, ink) = if m.unread { (k.ty.ui_medium, k.c.text_base) } else { (k.ty.ui, k.c.text_muted) };
     let mut dot = el().size(8.0, 8.0).radius(4.0);
     if m.unread {
@@ -72,6 +76,16 @@ fn message_row(k: &Kit, m: &MessageSummary, selected: bool, date: &str) -> El {
         .align(Align::End)
         .w(64.0);
     let id = m.gmail_id.clone();
+    let check_id = m.gmail_id.clone();
+    let checkbox = Checkbox::new(checked)
+        .label("Select")
+        .hide_label()
+        .on_toggle_tx(move |s: &mut App, tx: &mut rune::Tx| {
+            tx.instant();
+            s.click_checkbox(&check_id, tx.mods());
+        })
+        .build(k)
+        .key("check");
     let mut r = row()
         .w_full()
         .h(ROW_HEIGHT)
@@ -80,12 +94,18 @@ fn message_row(k: &Kit, m: &MessageSummary, selected: bool, date: &str) -> El {
         .items_center()
         .radius(k.radius.md)
         .hover(k.c.hover)
-        .on_press_tx(instant(move |s: &mut App| s.open_message(&id)))
+        .on_press_tx(move |s: &mut App, tx: &mut rune::Tx| {
+            tx.instant();
+            s.click_row(&id, tx.mods());
+        })
+        .child(checkbox)
         .child(dot)
         .child(from)
         .child(line)
         .child(date);
-    if selected {
+    if checked {
+        r = r.fill(k.c.layer_03);
+    } else if selected {
         r = r.fill(k.c.layer_02);
     }
     r

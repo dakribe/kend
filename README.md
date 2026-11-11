@@ -31,9 +31,12 @@ everything you've already loaded works offline. The UI is native and GPU-rendere
 - **Archive and delete** (E, #) with Undo (Z). The change shows at once and is sent to Gmail
   in the background; if Gmail refuses, the message comes back with the reason. Delete moves
   mail to Trash, which Gmail empties after 30 days.
+- **Select many at once** to archive or delete them together: X or the row's checkbox
+  selects a message, Shift+J/K extends, ⌘A selects all, ⌘-click toggles and Shift-click selects
+  a range. One Undo brings the whole batch back.
 - **Compose, reply and forward**, with replies kept in their Gmail conversation.
 - **Keyboard first**: J/K or arrows to move, Return to open, Esc to go back, ⌘F or / to
-  search, E to archive, # to delete, Z to undo, R to reply, F to forward, ⌘N for a new message, ⌘Return to send.
+  search, E to archive, # to delete, Z to undo, R to reply, F to forward, ⌘N for a new message, ⌘Return to send, and ? to see every shortcut.
 - **Instant actions.** Nothing animates except loading indicators: opening a message, moving
   the selection, switching mailboxes and toggling the sidebar all land in the frame they
   happen, and a test checks it for each action.

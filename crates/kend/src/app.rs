@@ -12,7 +12,7 @@ use rune_kit::PaneState;
 use rune_kit::shell;
 
 use crate::compose::{Compose, Field, SendState};
-use crate::session::{Move, Session};
+use crate::session::{Move, Moved, Session};
 use crate::sync_worker::{Spec, SyncUpdate, SyncWorker};
 
 pub struct App {
@@ -22,6 +22,8 @@ pub struct App {
     scratch: TextEdit,
     /// The sidebar's width and whether it's open.
     pub sidebar: PaneState,
+    /// Whether the keyboard shortcuts dialog is open (?).
+    pub help: bool,
     client: Option<ClientCredentials>,
     sender: Sender<Event>,
     events: Receiver<Event>,
@@ -66,12 +68,12 @@ pub enum Event {
         gmail_id: String,
         result: Result<Option<MessageBody>, String>,
     },
-    /// Gmail's answer to archiving or trashing a message; `previous` puts it back on failure.
+    /// Gmail's answer to archiving or trashing messages: the ones it refused, to put back,
+    /// and the first error.
     Moved {
         session: u64,
-        gmail_id: String,
-        previous: Vec<String>,
-        result: Result<(), String>,
+        failed: Vec<Moved>,
+        error: Option<String>,
     },
     /// Gmail's answer to undoing a move.
     Undone {
@@ -103,6 +105,7 @@ impl App {
             auth,
             scratch: TextEdit::new(""),
             sidebar: PaneState::new(232.0).range(180.0, 360.0),
+            help: false,
             client,
             sender,
             events,
@@ -162,12 +165,11 @@ impl App {
                 session.body_loaded(&gmail_id, result);
                 return true;
             }
-            (
-                Auth::SignedIn { session: Some(session), .. },
-                Event::Moved { session: id, gmail_id, previous, result },
-            ) if session.id == id => {
-                if let Err(err) = result {
-                    session.move_failed(&gmail_id, &previous, err);
+            (Auth::SignedIn { session: Some(session), .. }, Event::Moved { session: id, failed, error })
+                if session.id == id =>
+            {
+                if let Some(error) = error {
+                    session.move_failed(&failed, error);
                 }
                 return true;
             }
@@ -340,18 +342,20 @@ impl App {
         session.compose = Some(compose);
     }
 
-    /// Archives or trashes the open or selected message: at once here, then in Gmail.
+    /// Archives or trashes the open, checked or selected messages: at once here, then in Gmail.
     pub fn move_message(&mut self, action: Move) {
         let Some(session) = self.session_mut() else { return };
-        let Some(gmail_id) = session.move_message(action) else { return };
-        let previous = session.last_move.as_ref().map(|u| u.previous.clone()).unwrap_or_default();
+        let moved = session.move_messages(action);
         let (id, Some(gmail)) = (session.id, session.gmail.clone()) else { return };
+        if moved.is_empty() {
+            return;
+        }
         self.spawn("move", move || {
-            let result = match action {
-                Move::Archive => gmail.modify_labels(&gmail_id, &[], &["INBOX"]),
-                Move::Trash => gmail.trash(&gmail_id),
-            };
-            Event::Moved { session: id, gmail_id, previous, result: result.map_err(|e| e.to_string()) }
+            let (failed, error) = each_in_gmail(moved, |m| match action {
+                Move::Archive => gmail.modify_labels(&m.gmail_id, &[], &["INBOX"]),
+                Move::Trash => gmail.trash(&m.gmail_id),
+            });
+            Event::Moved { session: id, failed, error }
         });
     }
 
@@ -360,12 +364,46 @@ impl App {
         let Some(undo) = session.undo_move() else { return };
         let (id, Some(gmail)) = (session.id, session.gmail.clone()) else { return };
         self.spawn("undo", move || {
-            let result = match undo.action {
-                Move::Archive => gmail.modify_labels(&undo.gmail_id, &["INBOX"], &[]),
-                Move::Trash => gmail.untrash(&undo.gmail_id),
-            };
-            Event::Undone { session: id, result: result.map_err(|e| e.to_string()) }
+            let (_, error) = each_in_gmail(undo.messages, |m| match undo.action {
+                Move::Archive => gmail.modify_labels(&m.gmail_id, &["INBOX"], &[]),
+                Move::Trash => gmail.untrash(&m.gmail_id),
+            });
+            Event::Undone { session: id, result: error.map_or(Ok(()), Err) }
         });
+    }
+
+    /// A row click: ⌘-click checks or unchecks it, Shift-click checks the range up to it, and a
+    /// plain click opens it.
+    pub fn click_row(&mut self, gmail_id: &str, mods: rune::Mods) {
+        let Some(session) = self.session_mut() else { return };
+        if mods.shift {
+            session.check_range(gmail_id);
+        } else if mods.cmd {
+            session.toggle_checked(gmail_id);
+        } else {
+            session.clear_checked();
+            self.open_message(gmail_id);
+        }
+    }
+
+    /// The row's checkbox: Shift-click checks a range, any other click toggles the row.
+    pub fn click_checkbox(&mut self, gmail_id: &str, mods: rune::Mods) {
+        let Some(session) = self.session_mut() else { return };
+        if mods.shift {
+            session.check_range(gmail_id);
+        } else {
+            session.toggle_checked(gmail_id);
+        }
+    }
+
+    pub fn clear_checked(&mut self) {
+        if let Some(session) = self.session_mut() {
+            session.clear_checked();
+        }
+    }
+
+    pub fn toggle_help(&mut self) {
+        self.help = !self.help;
     }
 
     pub fn discard_compose(&mut self) {
@@ -495,6 +533,15 @@ impl App {
     pub fn on_key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
         // Keys land at once: no glide when the list follows the selection.
         tx.instant();
+        let plain = !(event.mods.cmd || event.mods.ctrl || event.mods.alt);
+        if self.help {
+            // The shortcuts dialog is up: only the keys that close it do anything.
+            let close = matches!(&event.key, Key::Escape) || matches!(&event.key, Key::Text(t) if t == "?");
+            if close {
+                self.help = false;
+            }
+            return close;
+        }
         if shell::is_sidebar_toggle(event) {
             self.sidebar.toggle();
             return true;
@@ -513,8 +560,35 @@ impl App {
             return false;
         }
         let reading = session.reading.is_some();
-        let plain = !(event.mods.cmd || event.mods.ctrl || event.mods.alt);
+        let shift = event.mods.shift;
+        if let Key::Text(t) = &event.key
+            && plain
+            && t == "?"
+        {
+            self.help = true;
+            return true;
+        }
+        if event.is_command('a') && !reading {
+            session.check_all();
+            return true;
+        }
         let delta = match &event.key {
+            Key::Escape if !session.checked.is_empty() && !reading => {
+                session.clear_checked();
+                return true;
+            }
+            Key::Text(t) if plain && !reading && t == "x" => {
+                let Some(id) = session.selected.clone().or_else(|| session.move_selection(1).map(str::to_string))
+                else {
+                    return false;
+                };
+                session.toggle_checked(&id);
+                return true;
+            }
+            Key::Down if !reading && shift => return extend(session, 1, tx),
+            Key::Up if !reading && shift => return extend(session, -1, tx),
+            Key::Text(t) if plain && !reading && t == "J" => return extend(session, 1, tx),
+            Key::Text(t) if plain && !reading && t == "K" => return extend(session, -1, tx),
             Key::Escape if reading => {
                 session.close_message();
                 return true;
@@ -599,6 +673,39 @@ impl App {
             let _ = self.sender.send(Event::Loaded(Err(Error::Io(err))));
         }
     }
+}
+
+/// Shift+J/K: checks the selected row and the next (or previous) one.
+fn extend(session: &mut Session, delta: isize, tx: &mut Tx) -> bool {
+    let Some(selected) = session.extend_selection(delta).map(str::to_string) else { return false };
+    tx.scroll_into_view(selected);
+    true
+}
+
+/// Runs `call` for each message on a few threads at once (the client paces them), returning
+/// the ones that failed and the first error.
+fn each_in_gmail(
+    messages: Vec<Moved>,
+    call: impl Fn(&Moved) -> Result<(), Error> + Sync,
+) -> (Vec<Moved>, Option<String>) {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let next = AtomicUsize::new(0);
+    let failed = Mutex::new((Vec::new(), None));
+    thread::scope(|scope| {
+        for _ in 0..messages.len().min(4) {
+            scope.spawn(|| {
+                while let Some(m) = messages.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    if let Err(err) = call(m) {
+                        let mut failed = failed.lock().unwrap_or_else(|p| p.into_inner());
+                        failed.0.push(m.clone());
+                        failed.1.get_or_insert(err.to_string());
+                    }
+                }
+            });
+        }
+    });
+    failed.into_inner().unwrap_or_else(|p| p.into_inner())
 }
 
 /// A click handler that lands its change at once, as every kend action does: no layout
@@ -880,6 +987,10 @@ mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 
+    fn ids(moved: &[Moved]) -> Vec<&str> {
+        moved.iter().map(|m| m.gmail_id.as_str()).collect()
+    }
+
     fn visible_ids(session: &Session) -> Vec<&str> {
         session.visible().iter().map(|m| m.gmail_id.as_str()).collect()
     }
@@ -888,27 +999,27 @@ mod tests {
     fn archiving_takes_a_message_out_of_the_inbox_and_selects_the_next() {
         let mut session = session_with(4);
         session.selected = Some("m0001".into());
-        assert_eq!(session.move_message(Move::Archive).as_deref(), Some("m0001"));
+        assert_eq!(ids(&session.move_messages(Move::Archive)), ["m0001"]);
         assert_eq!(visible_ids(&session), ["m0000", "m0002", "m0003"]);
         assert_eq!(session.selected.as_deref(), Some("m0002"), "the next message takes its place");
         assert_eq!(session.notice.as_deref(), Some("Archived"));
         // Archived again: it's no longer in the inbox, so nothing happens.
         session.selected = Some("m0001".into());
-        assert_eq!(session.move_message(Move::Archive), None);
+        assert!(session.move_messages(Move::Archive).is_empty());
     }
 
     #[test]
     fn undo_puts_a_trashed_message_back_with_its_labels() {
         let mut session = session_with(3);
         session.selected = Some("m0002".into());
-        session.move_message(Move::Trash);
+        session.move_messages(Move::Trash);
         assert_eq!(visible_ids(&session), ["m0000", "m0001"]);
         session.select("TRASH");
         assert_eq!(visible_ids(&session), ["m0002"]);
         session.select("INBOX");
 
         let undo = session.undo_move().unwrap();
-        assert_eq!((undo.gmail_id.as_str(), undo.action), ("m0002", Move::Trash));
+        assert_eq!((ids(&undo.messages), undo.action), (vec!["m0002"], Move::Trash));
         assert_eq!(visible_ids(&session), ["m0000", "m0001", "m0002"]);
         assert_eq!(session.selected.as_deref(), Some("m0002"));
         assert!(session.undo_move().is_none(), "one undo per move");
@@ -918,9 +1029,8 @@ mod tests {
     fn a_refused_move_brings_the_message_back() {
         let mut session = session_with(2);
         session.selected = Some("m0000".into());
-        session.move_message(Move::Trash);
-        let previous = vec!["INBOX".to_string()];
-        session.move_failed("m0000", &previous, "offline".into());
+        let moved = session.move_messages(Move::Trash);
+        session.move_failed(&moved, "offline".into());
         assert_eq!(visible_ids(&session), ["m0000", "m0001"]);
         assert!(session.error.as_deref().is_some_and(|e| e.contains("offline")));
         assert!(session.last_move.is_none());
@@ -930,8 +1040,97 @@ mod tests {
     fn the_open_message_is_the_one_moved() {
         let mut session = session_with(3);
         session.open_message("m0001");
-        session.move_message(Move::Archive);
+        session.move_messages(Move::Archive);
         assert!(session.reading.is_none(), "back to the list");
         assert_eq!(visible_ids(&session), ["m0000", "m0002"]);
+    }
+
+    #[test]
+    fn checked_messages_are_archived_together_and_undone_together() {
+        let mut session = session_with(5);
+        session.toggle_checked("m0001");
+        session.toggle_checked("m0003");
+        session.selected = Some("m0004".into());
+        assert_eq!(
+            ids(&session.move_messages(Move::Archive)),
+            ["m0001", "m0003"],
+            "checked rows win over the selection"
+        );
+        assert_eq!(visible_ids(&session), ["m0000", "m0002", "m0004"]);
+        assert!(session.checked.is_empty());
+        assert_eq!(session.notice.as_deref(), Some("Archived 2 messages"));
+
+        session.undo_move();
+        assert_eq!(visible_ids(&session).len(), 5);
+        assert_eq!(session.checked.len(), 2, "the undone messages are selected again");
+    }
+
+    #[test]
+    fn shift_click_checks_a_range_and_cmd_click_toggles() {
+        let mut app = App::with_client(None);
+        signed_in_with(&mut app, 6, false);
+        let cmd = rune::Mods { cmd: true, ..Default::default() };
+        let shift = rune::Mods { shift: true, ..Default::default() };
+        app.click_row("m0001", cmd);
+        app.click_row("m0004", shift);
+        let checked = |app: &App| {
+            let mut c: Vec<_> = app.session().unwrap().checked.iter().cloned().collect();
+            c.sort();
+            c
+        };
+        assert_eq!(checked(&app), ["m0001", "m0002", "m0003", "m0004"]);
+        app.click_row("m0002", cmd);
+        assert_eq!(checked(&app), ["m0001", "m0003", "m0004"]);
+        assert_eq!(reading(&app), None, "modified clicks don't open");
+        app.click_row("m0005", rune::Mods::default());
+        assert_eq!(reading(&app), Some("m0005"));
+        assert!(checked(&app).is_empty(), "a plain click clears the selection");
+    }
+
+    #[test]
+    fn x_shift_j_and_cmd_a_check_rows_and_escape_clears() {
+        let mut app = App::with_client(None);
+        signed_in_with(&mut app, 5, false);
+        let checked = |app: &App| app.session().unwrap().checked.len();
+        press(&mut app, Key::Text("x".into()));
+        assert_eq!(checked(&app), 1, "x checks the top row when nothing is selected");
+        press(&mut app, Key::Text("x".into()));
+        assert_eq!(checked(&app), 0);
+        press(&mut app, Key::Text("J".into()));
+        press(&mut app, Key::Text("J".into()));
+        assert_eq!(checked(&app), 3);
+        assert_eq!(app.session().unwrap().selected.as_deref(), Some("m0002"));
+        press(&mut app, Key::Escape);
+        assert_eq!(checked(&app), 0);
+        let mut tx = Tx::default();
+        app.on_key(&KeyEvent { key: Key::Command('a'), mods: rune::Mods { cmd: true, ..Default::default() } }, &mut tx);
+        assert_eq!(checked(&app), 5);
+        press(&mut app, Key::Text("#".into()));
+        assert!(app.session().unwrap().visible().is_empty(), "all five went to Trash");
+    }
+
+    #[test]
+    fn question_mark_opens_help_and_escape_closes_it() {
+        let mut app = App::with_client(None);
+        signed_in_with(&mut app, 3, false);
+        press(&mut app, Key::Text("?".into()));
+        assert!(app.help);
+        press(&mut app, Key::Text("e".into()));
+        assert_eq!(visible_ids(app.session().unwrap()).len(), 3, "list keys wait while help is open");
+        press(&mut app, Key::Escape);
+        assert!(!app.help);
+    }
+
+    #[test]
+    fn bulk_gmail_calls_report_only_the_failures() {
+        let messages: Vec<Moved> =
+            (0..10).map(|i| Moved { gmail_id: format!("m{i}"), previous: vec!["INBOX".into()] }).collect();
+        let (failed, error) = each_in_gmail(messages, |m| {
+            if m.gmail_id == "m3" || m.gmail_id == "m7" { Err(Error::TimedOut) } else { Ok(()) }
+        });
+        let mut failed = ids(&failed);
+        failed.sort();
+        assert_eq!(failed, ["m3", "m7"]);
+        assert!(error.is_some());
     }
 }

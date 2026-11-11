@@ -1,7 +1,7 @@
 //! A signed-in session: the UI's own database connection, the mailbox it shows and the sync
 //! worker feeding the database.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use kend_gmail::{Gmail, MessageBody};
@@ -30,8 +30,13 @@ pub struct Session {
     searches: Option<Searches>,
     /// Bumped whenever `rows` is replaced rather than extended, so the list re-reads its keys.
     pub rows_version: u64,
-    /// The selected message's Gmail id.
+    /// The selected message's Gmail id: the row the keyboard is on.
     pub selected: Option<String>,
+    /// Messages checked for a bulk action (X, ⌘-click, Shift-click). Archive and delete act on
+    /// these when there are any.
+    pub checked: HashSet<String>,
+    /// Where a Shift-click range starts: the last row checked or unchecked on its own.
+    anchor: Option<String>,
     /// Messages in the selected mailbox.
     pub total: u64,
     /// Unread messages per label id.
@@ -62,11 +67,17 @@ pub enum Move {
     Trash,
 }
 
-/// What Undo needs: the message and the labels it had before.
+/// A moved message and the labels it had before, to put it back.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Undo {
+pub struct Moved {
     pub gmail_id: String,
     pub previous: Vec<String>,
+}
+
+/// What Undo needs: the messages one archive or delete moved.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Undo {
+    pub messages: Vec<Moved>,
     pub action: Move,
 }
 
@@ -138,6 +149,8 @@ impl Session {
             searches: None,
             rows_version: 0,
             selected: None,
+            checked: HashSet::new(),
+            anchor: None,
             total: 0,
             unread: HashMap::new(),
             labels: Vec::new(),
@@ -165,6 +178,7 @@ impl Session {
             self.mailbox = mailbox.to_string();
             self.rows.clear();
             self.selected = None;
+            self.clear_checked();
             self.reload();
         }
     }
@@ -252,6 +266,7 @@ impl Session {
     fn show_results(&mut self, results: Option<Vec<MessageSummary>>) {
         self.results = results;
         self.selected = None;
+        self.clear_checked();
         self.rows_version += 1;
     }
 
@@ -284,6 +299,55 @@ impl Session {
         let next = next.min(self.visible().len().checked_sub(1)?);
         self.selected = Some(self.visible()[next].gmail_id.clone());
         self.selected.as_deref()
+    }
+
+    /// Checks or unchecks one message, and starts the next Shift-click range there.
+    pub fn toggle_checked(&mut self, gmail_id: &str) {
+        self.notice = None;
+        if !self.checked.remove(gmail_id) {
+            self.checked.insert(gmail_id.to_string());
+        }
+        self.selected = Some(gmail_id.to_string());
+        self.anchor = Some(gmail_id.to_string());
+    }
+
+    /// Checks every row from the anchor (or the selected row) to `gmail_id`, as Shift-click does.
+    pub fn check_range(&mut self, gmail_id: &str) {
+        self.notice = None;
+        let position =
+            |id: &Option<String>| id.as_ref().and_then(|id| self.visible().iter().position(|m| &m.gmail_id == id));
+        let Some(end) = self.visible().iter().position(|m| m.gmail_id == gmail_id) else { return };
+        let start = position(&self.anchor).or(position(&self.selected)).unwrap_or(end);
+        let ids: Vec<String> =
+            self.visible()[start.min(end)..=start.max(end)].iter().map(|m| m.gmail_id.clone()).collect();
+        self.checked.extend(ids);
+        if self.anchor.is_none() {
+            self.anchor = Some(self.visible()[start].gmail_id.clone());
+        }
+        self.selected = Some(gmail_id.to_string());
+    }
+
+    /// Checks the selected row and the one `delta` away, then selects that one: Shift+J/K.
+    pub fn extend_selection(&mut self, delta: isize) -> Option<&str> {
+        self.notice = None;
+        let Some(from) = self.selected.clone() else { return self.move_selection(delta) };
+        self.checked.insert(from.clone());
+        self.anchor.get_or_insert(from);
+        let to = self.move_selection(delta)?.to_string();
+        self.checked.insert(to);
+        self.selected.as_deref()
+    }
+
+    /// Checks every loaded row in the list.
+    pub fn check_all(&mut self) {
+        self.notice = None;
+        let ids: Vec<String> = self.visible().iter().map(|m| m.gmail_id.clone()).collect();
+        self.checked.extend(ids);
+    }
+
+    pub fn clear_checked(&mut self) {
+        self.checked.clear();
+        self.anchor = None;
     }
 
     /// Opens a message: shown at once from the store, marked read locally straight away.
@@ -343,69 +407,101 @@ impl Session {
         }
     }
 
-    /// The message an action applies to: the open one, else the selected row.
-    pub fn target(&self) -> Option<&str> {
-        self.reading.as_ref().map(|r| r.message.summary.gmail_id.as_str()).or(self.selected.as_deref())
+    /// The messages an action applies to: the open one, else the checked rows (in list
+    /// order), else the selected row.
+    pub fn targets(&self) -> Vec<String> {
+        if let Some(reading) = &self.reading {
+            return vec![reading.message.summary.gmail_id.clone()];
+        }
+        if !self.checked.is_empty() {
+            return self
+                .visible()
+                .iter()
+                .filter(|m| self.checked.contains(&m.gmail_id))
+                .map(|m| m.gmail_id.clone())
+                .collect();
+        }
+        self.selected.iter().cloned().collect()
     }
 
-    /// Archives or trashes the target locally, at once. The selection moves to the row that
-    /// takes its place, so the next key acts on the next message. Returns the message's Gmail
-    /// id when something changed; the caller tells Gmail.
-    pub fn move_message(&mut self, action: Move) -> Option<String> {
-        let gmail_id = self.target()?.to_string();
-        let id = self.store.find(self.account, &gmail_id).ok()??;
-        let previous = self.store.message(id).ok()??.label_ids;
-        let mut labels = previous.clone();
-        match action {
-            Move::Archive => labels.retain(|l| l != "INBOX"),
-            Move::Trash if !labels.iter().any(|l| l == "TRASH") => labels.push("TRASH".into()),
-            Move::Trash => {}
+    /// Archives or trashes the targets locally, at once. The selection moves to the row that
+    /// takes the first one's place, so the next key acts on the next message. Returns what
+    /// changed; the caller tells Gmail.
+    pub fn move_messages(&mut self, action: Move) -> Vec<Moved> {
+        let targets = self.targets();
+        let first = targets.first().and_then(|id| self.visible().iter().position(|m| &m.gmail_id == id));
+        let mut moved = Vec::new();
+        for gmail_id in targets {
+            let Some(previous) = self.labels_of(&gmail_id) else { continue };
+            let mut labels = previous.clone();
+            match action {
+                Move::Archive => labels.retain(|l| l != "INBOX"),
+                Move::Trash if !labels.iter().any(|l| l == "TRASH") => labels.push("TRASH".into()),
+                Move::Trash => {}
+            }
+            if labels != previous && self.store.set_labels(self.account, &gmail_id, &labels).unwrap_or(false) {
+                moved.push(Moved { gmail_id, previous });
+            }
         }
-        if labels == previous {
-            return None;
+        if moved.is_empty() {
+            return moved;
         }
-        let index = self.visible().iter().position(|m| m.gmail_id == gmail_id);
-        self.store.set_labels(self.account, &gmail_id, &labels).ok()?;
         if action == Move::Trash
             && let Some(results) = &mut self.results
         {
-            // Search covers all mail, so only a trashed message leaves the results.
-            results.retain(|m| m.gmail_id != gmail_id);
+            // Search covers all mail, so only trashed messages leave the results.
+            results.retain(|m| !moved.iter().any(|x| x.gmail_id == m.gmail_id));
         }
         self.reading = None;
+        self.clear_checked();
         self.reload();
         let visible = self.visible();
         self.selected =
-            index.and_then(|i| visible.get(i.min(visible.len().checked_sub(1)?))).map(|m| m.gmail_id.clone());
-        self.notice = Some(match action {
-            Move::Archive => "Archived".into(),
-            Move::Trash => "Moved to Trash".into(),
+            first.and_then(|i| visible.get(i.min(visible.len().checked_sub(1)?))).map(|m| m.gmail_id.clone());
+        self.notice = Some(match (action, moved.len()) {
+            (Move::Archive, 1) => "Archived".into(),
+            (Move::Trash, 1) => "Moved to Trash".into(),
+            (Move::Archive, n) => format!("Archived {n} messages"),
+            (Move::Trash, n) => format!("Moved {n} messages to Trash"),
         });
-        self.last_move = Some(Undo { gmail_id: gmail_id.clone(), previous, action });
-        Some(gmail_id)
+        self.last_move = Some(Undo { messages: moved.clone(), action });
+        moved
     }
 
-    /// Puts the last moved message back as it was, locally. Returns what to undo in Gmail.
+    fn labels_of(&self, gmail_id: &str) -> Option<Vec<String>> {
+        let id = self.store.find(self.account, gmail_id).ok()??;
+        Some(self.store.message(id).ok()??.label_ids)
+    }
+
+    /// Puts the last moved messages back as they were, locally. Returns what to undo in Gmail.
     pub fn undo_move(&mut self) -> Option<Undo> {
         let undo = self.last_move.take()?;
-        self.store.set_labels(self.account, &undo.gmail_id, &undo.previous).ok()?;
+        for m in &undo.messages {
+            let _ = self.store.set_labels(self.account, &m.gmail_id, &m.previous);
+        }
         self.notice = None;
         if self.results.is_some() {
             self.search_changed();
         }
         self.reload();
-        self.selected = Some(undo.gmail_id.clone());
+        self.selected = undo.messages.first().map(|m| m.gmail_id.clone());
+        if undo.messages.len() > 1 {
+            self.checked = undo.messages.iter().map(|m| m.gmail_id.clone()).collect();
+        }
         Some(undo)
     }
 
-    /// Gmail refused a move: put the message back and say why.
-    pub fn move_failed(&mut self, gmail_id: &str, previous: &[String], error: String) {
-        let _ = self.store.set_labels(self.account, gmail_id, previous);
-        if self.last_move.as_ref().is_some_and(|u| u.gmail_id == gmail_id) {
+    /// Gmail refused some moves: put those messages back and say why.
+    pub fn move_failed(&mut self, failed: &[Moved], error: String) {
+        for m in failed {
+            let _ = self.store.set_labels(self.account, &m.gmail_id, &m.previous);
+        }
+        if self.last_move.as_ref().is_some_and(|u| u.messages.iter().any(|m| failed.contains(m))) {
             self.last_move = None;
             self.notice = None;
         }
-        self.error = Some(format!("Couldn't move the message: {error}"));
+        let what = if failed.len() == 1 { "the message".to_string() } else { format!("{} messages", failed.len()) };
+        self.error = Some(format!("Couldn't move {what}: {error}"));
         self.reload();
     }
 
