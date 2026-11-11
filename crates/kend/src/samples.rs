@@ -22,6 +22,21 @@ fn now_ms() -> i64 {
     jiff::Timestamp::now().as_millisecond()
 }
 
+/// An email laid out the way real ones are: nested tables, a hidden preview, a tracking pixel.
+const NEWSLETTER: &str = r#"<html><head><style>td{font-family:Arial}</style></head><body>
+<div style="display:none;max-height:0">New issue in kend: Search is too fast &zwnj;&zwnj;&zwnj;</div>
+<table width="100%"><tr><td align="center"><table width="600"><tr><td>
+<img src="https://github.example/logo.png" alt="GitHub">
+<h2>New issue: Search is too fast</h2>
+<p><b>@somebody</b> opened an issue in <a href="https://github.example/kend">kend</a>:</p>
+<blockquote>Results show up before I finish typing. Is this a bug?</blockquote>
+<ul><li>Version: 0.1.0</li><li>OS: macOS 27</li></ul>
+<table><tr><th>Label</th><th>Count</th></tr><tr><td>bug</td><td>1</td></tr><tr><td>question</td><td>3</td></tr></table>
+<p><a href="https://github.example/kend/issues/1">View it on GitHub</a></p>
+</td></tr></table></td></tr></table>
+<img src="https://github.example/track.gif" width="1" height="1">
+</body></html>"#;
+
 /// A message `i` steps older than the samples, with varied senders, subjects and read state.
 fn generated(i: usize) -> NewMessage {
     let unread = i.is_multiple_of(7);
@@ -88,6 +103,15 @@ fn inbox_with(sync: SyncStatus, extra: usize) -> Auth {
             ..NewMessage::default()
         })
         .collect();
+    messages[0].to = "you@gmail.com".into();
+    messages[0].body_text = Some(
+        "Hi!\n\nWe're thinking 7pm at the usual place on Friday. Sam and Priya are in, and Bo might come \
+         late after his flight lands.\n\nLet me know if that works, or if Saturday is better for you. I can \
+         book a table either way.\n\nAna"
+            .into(),
+    );
+    messages[1].body_text = Some("Somebody opened a new issue.".into());
+    messages[1].body_html = Some(NEWSLETTER.into());
     messages.extend((0..extra).map(generated));
     let account = Account::new("you@gmail.com".into(), String::new());
     let session = Store::open_in_memory()
@@ -99,7 +123,7 @@ fn inbox_with(sync: SyncStatus, extra: usize) -> Auth {
                 &[label("Label_1", "Receipts"), label("Label_2", "Work"), label("Label_3", "Work/Clients")],
             )?;
             store.upsert_messages(id, &messages)?;
-            Session::open(1, store, &account.email, None)
+            Session::open(1, store, &account.email, None, None)
         })
         .ok()
         .map(|mut session| {

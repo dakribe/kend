@@ -202,3 +202,16 @@ fn mailbox_pages_read_from_the_covering_index() {
     assert!(plan.contains("SEARCH ml USING PRIMARY KEY"), "{plan}");
     assert!(!plan.contains("TEMP B-TREE"), "no sort step expected:\n{plan}");
 }
+
+#[test]
+fn marking_read_and_unread_updates_the_row_and_the_counts() {
+    let (mut store, a) = store();
+    store.upsert_messages(a, &[msg("m1", 1, &["INBOX", "UNREAD"])]).unwrap();
+    assert!(store.set_unread(a, "m1", false).unwrap());
+    assert!(!store.list(a, "INBOX", None, 1).unwrap()[0].unread);
+    assert_eq!(store.unread_count(a, "INBOX").unwrap(), 0);
+    assert!(store.set_unread(a, "m1", true).unwrap());
+    assert!(store.list(a, "INBOX", None, 1).unwrap()[0].unread);
+    assert_eq!(store.unread_count(a, "INBOX").unwrap(), 1);
+    assert!(!store.set_unread(a, "missing", false).unwrap());
+}

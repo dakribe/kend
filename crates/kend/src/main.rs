@@ -2,8 +2,10 @@
 
 mod app;
 mod dates;
+mod html;
 mod icons;
 mod message_list;
+mod reading;
 mod samples;
 mod session;
 mod sidebar;

@@ -2,11 +2,12 @@
 //! thread and its own database connection.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use kend_gmail::{Account, ClientCredentials, Gmail};
+use kend_gmail::Gmail;
 use kend_store::Store;
 use kend_sync::{Options, Report};
 use rune::Waker;
@@ -40,8 +41,8 @@ pub struct SyncWorker {
 }
 
 pub struct Spec {
-    pub client: ClientCredentials,
-    pub account: Account,
+    /// Shared with the session, so opening messages and sync use one token and one quota.
+    pub gmail: Arc<Gmail>,
     pub db_path: PathBuf,
     pub session: u64,
     pub events: Sender<Event>,
@@ -79,17 +80,18 @@ fn run(spec: Spec, commands: Receiver<Command>) {
             wake();
         }
     };
-    let opened = Store::open(&spec.db_path).and_then(|store| Ok((store.upsert_account(&spec.account.email)?, store)));
+    let email = spec.gmail.account().email.clone();
+    let opened = Store::open(&spec.db_path).and_then(|store| Ok((store.upsert_account(&email)?, store)));
     let (account_id, mut store) = match opened {
         Ok(opened) => opened,
         Err(err) => return send(SyncUpdate::Finished(Err(err.to_string()))),
     };
-    let gmail = Gmail::new(spec.client, spec.account.clone());
+    let gmail = &*spec.gmail;
     let options = Options::default();
 
     loop {
         let started = Instant::now();
-        let result = kend_sync::sync(&gmail, &mut store, account_id, &options, &mut |n| send(SyncUpdate::Progress(n)));
+        let result = kend_sync::sync(gmail, &mut store, account_id, &options, &mut |n| send(SyncUpdate::Progress(n)));
         log(&result, started.elapsed());
         let wait = match result {
             Err(kend_sync::Error::Gmail(kend_gmail::Error::SignedOut)) => {

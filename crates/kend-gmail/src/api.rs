@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
+use crate::body::{FullMessage, MessageBody};
 use crate::http::{agent, json};
 use crate::{AccessToken, Account, ClientCredentials, Error, Result, access_token};
 
@@ -213,6 +214,21 @@ impl Gmail {
         }
     }
 
+    /// A message's body, or `None` when it no longer exists.
+    pub fn body(&self, id: &str) -> Result<Option<MessageBody>> {
+        match self.get::<FullMessage>(&format!("/messages/{id}"), &[("format", "full")], 5) {
+            Ok(message) => Ok(Some(message.into())),
+            Err(Error::NotFound) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Adds and removes labels on a message (`UNREAD` to mark it unread or read).
+    pub fn modify_labels(&self, id: &str, add: &[&str], remove: &[&str]) -> Result<()> {
+        let body = serde_json::json!({ "addLabelIds": add, "removeLabelIds": remove });
+        self.post::<serde_json::Value>(&format!("/messages/{id}/modify"), &body, 5).map(|_| ())
+    }
+
     /// Changes since `start`. [`Error::NotFound`] means `start` is too old and a full sync is
     /// needed.
     pub fn history(&self, start: &str, page_token: Option<&str>) -> Result<History> {
@@ -224,17 +240,31 @@ impl Gmail {
     /// GETs `path`, spending `units` of the quota (Gmail's published cost of the call).
     fn get<T: DeserializeOwned>(&self, path: &str, query: &[(&str, &str)], units: u32) -> Result<T> {
         let url = format!("{API}{path}");
+        self.call(units, |bearer| {
+            agent().get(&url).query_pairs(query.iter().copied()).header("Authorization", bearer).call()
+        })
+    }
+
+    /// POSTs `body` as JSON to `path`.
+    fn post<T: DeserializeOwned>(&self, path: &str, body: &serde_json::Value, units: u32) -> Result<T> {
+        let url = format!("{API}{path}");
+        self.call(units, |bearer| agent().post(&url).header("Authorization", bearer).send_json(body))
+    }
+
+    /// Sends a request made by `send` (given the `Authorization` value), paced to the quota, with
+    /// a token refresh on 401 and backoff on rate limits and transient failures.
+    fn call<T: DeserializeOwned>(
+        &self,
+        units: u32,
+        send: impl Fn(&str) -> std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+    ) -> Result<T> {
         let mut refreshed = false;
         let mut attempt = 0;
         loop {
             attempt += 1;
             self.pacer.wait(units);
-            let bearer = self.bearer()?;
-            let request = agent()
-                .get(&url)
-                .query_pairs(query.iter().copied())
-                .header("Authorization", format!("Bearer {bearer}"));
-            match request.call().map_err(Error::from).and_then(json) {
+            let bearer = format!("Bearer {}", self.bearer()?);
+            match send(&bearer).map_err(Error::from).and_then(json) {
                 Ok(value) => return Ok(value),
                 // The token expired early or was replaced: refresh once and try again.
                 Err(Error::Unauthorized) if !refreshed => {

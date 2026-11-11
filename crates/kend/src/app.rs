@@ -1,10 +1,11 @@
 //! App state. Slow work (Keychain, browser sign-in, network) runs on background threads and
 //! lands here as an [`Event`] in `poll`, so the window never waits on it.
 
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 
-use kend_gmail::{Account, CancelToken, ClientCredentials, Error};
+use kend_gmail::{Account, CancelToken, ClientCredentials, Error, Gmail, MessageBody};
 use kend_store::Store;
 use rune::{Key, KeyEvent, Tx, Waker};
 use rune_kit::PaneState;
@@ -47,8 +48,26 @@ pub enum Auth {
 
 pub enum Event {
     Loaded(Result<Option<Account>, Error>),
-    SignInFinished { attempt: u64, result: Result<Account, Error> },
-    Sync { session: u64, update: SyncUpdate },
+    SignInFinished {
+        attempt: u64,
+        result: Result<Account, Error>,
+    },
+    Sync {
+        session: u64,
+        update: SyncUpdate,
+    },
+    /// A message body fetched for reading.
+    Body {
+        session: u64,
+        gmail_id: String,
+        result: Result<Option<MessageBody>, String>,
+    },
+    /// Gmail's answer to marking a message read.
+    MarkedRead {
+        session: u64,
+        gmail_id: String,
+        result: Result<(), String>,
+    },
 }
 
 impl App {
@@ -112,6 +131,19 @@ impl App {
                 }
                 Auth::SignedOut { error: Some(Error::SignedOut.to_string()) }
             }
+            (Auth::SignedIn { session: Some(session), .. }, Event::Body { session: id, gmail_id, result })
+                if session.id == id =>
+            {
+                session.body_loaded(&gmail_id, result);
+                return true;
+            }
+            (
+                Auth::SignedIn { session: Some(session), .. },
+                Event::MarkedRead { session: id, gmail_id, result: Err(error) },
+            ) if session.id == id => {
+                session.mark_read_failed(&gmail_id, error);
+                return true;
+            }
             _ => return false,
         };
         self.auth = next;
@@ -128,16 +160,16 @@ impl App {
         };
         self.next_attempt += 1;
         let id = self.next_attempt;
+        let gmail = Arc::new(Gmail::new(client, account.clone()));
         let opened = Store::default_path().and_then(|path| {
             let worker = SyncWorker::start(Spec {
-                client,
-                account: account.clone(),
+                gmail: gmail.clone(),
                 db_path: path.clone(),
                 session: id,
                 events: self.sender.clone(),
                 waker: self.waker.clone(),
             });
-            Session::open(id, Store::open(&path)?, &account.email, Some(worker))
+            Session::open(id, Store::open(&path)?, &account.email, Some(worker), Some(gmail))
         });
         match opened {
             Ok(opened) => *session = Some(Box::new(opened)),
@@ -202,31 +234,101 @@ impl App {
         self.session_mut().is_some_and(|session| session.load_more(visible_end))
     }
 
-    pub fn select_message(&mut self, gmail_id: &str) {
+    /// Opens a message: shown at once, its body fetched and Gmail told it's read, both in the
+    /// background.
+    pub fn open_message(&mut self, gmail_id: &str) {
+        let Some(session) = self.session_mut() else { return };
+        let opened = session.open_message(gmail_id);
+        let (id, gmail) = (session.id, session.gmail.clone());
+        let Some(gmail) = gmail else { return };
+        if opened.fetch_body {
+            self.fetch_body(id, gmail.clone(), gmail_id.to_string());
+        }
+        if opened.mark_read {
+            let gmail_id = gmail_id.to_string();
+            self.spawn("mark-read", move || {
+                let result = gmail.modify_labels(&gmail_id, &[], &["UNREAD"]).map_err(|e| e.to_string());
+                Event::MarkedRead { session: id, gmail_id, result }
+            });
+        }
+    }
+
+    fn fetch_body(&self, session: u64, gmail: Arc<Gmail>, gmail_id: String) {
+        self.spawn("body", move || {
+            let result = gmail.body(&gmail_id).map_err(|e| e.to_string());
+            Event::Body { session, gmail_id, result }
+        });
+    }
+
+    /// Opens a link from an email in the default browser. Only web and mail links: an email
+    /// shouldn't be able to launch apps through custom URL schemes or open local files.
+    pub fn open_link(&mut self, url: &str) {
+        if let Some(url) = safe_link(url) {
+            let _ = open::that_detached(url);
+        }
+    }
+
+    /// Writes the open message's HTML to a temporary file and opens it in the default browser,
+    /// for designed emails the reading view simplifies.
+    pub fn open_in_browser(&mut self) {
+        let Some(reading) = self.session().and_then(|s| s.reading.as_ref()) else { return };
+        let Some(html) = &reading.message.body_html else { return };
+        let dir = std::env::temp_dir().join("kend");
+        // Gmail ids are hex, so they make safe file names.
+        let file = dir.join(format!("{}.html", reading.message.summary.gmail_id));
+        let page = format!("<!doctype html><meta charset=\"utf-8\">\n{html}");
+        if std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&file, page)).is_ok() {
+            let _ = open::that_detached(&file);
+        }
+    }
+
+    pub fn close_message(&mut self) {
         if let Some(session) = self.session_mut() {
-            session.selected = Some(gmail_id.to_string());
+            session.close_message();
+        }
+    }
+
+    pub fn retry_body(&mut self) {
+        let Some(session) = self.session_mut() else { return };
+        let Some(gmail_id) = session.retry_body() else { return };
+        if let Some(gmail) = session.gmail.clone() {
+            let id = session.id;
+            self.fetch_body(id, gmail, gmail_id);
         }
     }
 
     /// Window-wide shortcuts: ⇧⌘B shows and hides the sidebar; J/K and the arrows move
-    /// through messages.
+    /// through messages, Return opens one and Escape goes back to the list. While a message
+    /// is open, J/K open the next and previous one.
     pub fn on_key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
         if shell::is_sidebar_toggle(event) {
             self.sidebar.toggle();
             return true;
         }
+        let Some(session) = self.session_mut() else { return false };
+        let reading = session.reading.is_some();
         let plain = !(event.mods.cmd || event.mods.ctrl || event.mods.alt);
         let delta = match &event.key {
-            Key::Down => 1,
-            Key::Up => -1,
+            Key::Escape if reading => {
+                session.close_message();
+                return true;
+            }
+            Key::Enter if !reading => {
+                let Some(id) = session.selected.clone() else { return false };
+                self.open_message(&id);
+                return true;
+            }
+            Key::Down if !reading => 1,
+            Key::Up if !reading => -1,
             Key::Text(t) if plain && t == "j" => 1,
             Key::Text(t) if plain && t == "k" => -1,
             _ => return false,
         };
-        let Some(selected) = self.session_mut().and_then(|session| session.move_selection(delta)) else {
-            return false;
-        };
-        tx.scroll_into_view(selected.to_string());
+        let Some(selected) = session.move_selection(delta).map(str::to_string) else { return false };
+        if reading {
+            self.open_message(&selected);
+        }
+        tx.scroll_into_view(selected);
         true
     }
 
@@ -264,6 +366,13 @@ impl App {
     }
 }
 
+/// `url` trimmed, when it's a web or mail link.
+fn safe_link(url: &str) -> Option<&str> {
+    let url = url.trim();
+    let lower = url.to_ascii_lowercase();
+    ["https://", "http://", "mailto:"].iter().any(|scheme| lower.starts_with(scheme)).then_some(url)
+}
+
 #[cfg(test)]
 mod tests {
     use kend_store::{Address, NewMessage};
@@ -276,7 +385,7 @@ mod tests {
     }
 
     fn signed_in(app: &mut App, id: u64) {
-        let session = Session::open(id, Store::open_in_memory().unwrap(), "me@example.com", None).unwrap();
+        let session = Session::open(id, Store::open_in_memory().unwrap(), "me@example.com", None, None).unwrap();
         app.auth = Auth::SignedIn { account: account(), session: Some(Box::new(session)) };
     }
 
@@ -364,7 +473,7 @@ mod tests {
         let mut store = Store::open_in_memory().unwrap();
         let id = store.upsert_account("me@example.com").unwrap();
         store.upsert_messages(id, &many(count)).unwrap();
-        Session::open(1, store, "me@example.com", None).unwrap()
+        Session::open(1, store, "me@example.com", None, None).unwrap()
     }
 
     #[test]
@@ -399,5 +508,104 @@ mod tests {
         session.selected = Some("m0199".into());
         assert_eq!(session.move_selection(1), Some("m0200"), "past the loaded rows");
         assert_eq!(session.rows.len(), 400);
+    }
+
+    fn signed_in_with(app: &mut App, count: usize, unread: bool) {
+        let mut store = Store::open_in_memory().unwrap();
+        let id = store.upsert_account("me@example.com").unwrap();
+        let mut messages = many(count);
+        for m in &mut messages {
+            if unread {
+                m.label_ids.push("UNREAD".into());
+            }
+        }
+        messages[1].body_text = Some("already here".into());
+        store.upsert_messages(id, &messages).unwrap();
+        let session = Session::open(1, store, "me@example.com", None, None).unwrap();
+        app.auth = Auth::SignedIn { account: account(), session: Some(Box::new(session)) };
+    }
+
+    fn reading(app: &App) -> Option<&str> {
+        app.session()?.reading.as_ref().map(|r| r.message.summary.gmail_id.as_str())
+    }
+
+    #[test]
+    fn opening_marks_read_at_once_and_asks_for_a_missing_body() {
+        let mut session = session_with(3);
+        let account = session.account();
+        session.store_mut().set_unread(account, "m0000", true).unwrap();
+        session.reload();
+        let opened = session.open_message("m0000");
+        assert_eq!(opened, crate::session::Opened { fetch_body: true, mark_read: true });
+        assert!(!session.rows[0].unread, "the list shows it read straight away");
+        assert!(matches!(session.reading.as_ref().unwrap().body, crate::session::BodyState::Loading));
+
+        // Opening it again doesn't mark it read twice.
+        assert!(!session.open_message("m0000").mark_read);
+    }
+
+    #[test]
+    fn a_fetched_body_is_shown_and_kept_for_next_time() {
+        let mut session = session_with(3);
+        session.open_message("m0002");
+        let body = kend_gmail::MessageBody { text: "hello".into(), html: None };
+        session.body_loaded("m0002", Ok(Some(body)));
+        let reading = session.reading.as_ref().unwrap();
+        assert!(matches!(reading.body, crate::session::BodyState::Ready));
+        assert_eq!(reading.message.body_text.as_deref(), Some("hello"));
+
+        session.close_message();
+        assert!(!session.open_message("m0002").fetch_body, "stored: no second download");
+    }
+
+    #[test]
+    fn a_body_for_a_message_no_longer_open_is_still_stored() {
+        let mut session = session_with(3);
+        session.open_message("m0000");
+        session.open_message("m0001");
+        session.body_loaded("m0000", Ok(Some(kend_gmail::MessageBody { text: "late".into(), html: None })));
+        assert_eq!(session.reading.as_ref().unwrap().message.summary.gmail_id, "m0001");
+        assert!(!session.open_message("m0000").fetch_body);
+    }
+
+    #[test]
+    fn a_refused_read_mark_shows_the_message_unread_again() {
+        let mut session = session_with(3);
+        let account = session.account();
+        session.store_mut().set_unread(account, "m0000", true).unwrap();
+        session.open_message("m0000");
+        session.mark_read_failed("m0000", "offline".into());
+        session.reload();
+        assert!(session.rows[0].unread);
+        assert!(session.error.as_deref().is_some_and(|e| e.contains("offline")));
+    }
+
+    fn press(app: &mut App, key: Key) {
+        let mut tx = Tx::default();
+        app.on_key(&KeyEvent { key, mods: Default::default() }, &mut tx);
+    }
+
+    #[test]
+    fn return_opens_escape_closes_and_j_moves_to_the_next_message() {
+        let mut app = App::with_client(None);
+        signed_in_with(&mut app, 5, false);
+        press(&mut app, Key::Text("j".into()));
+        assert_eq!(app.session().unwrap().selected.as_deref(), Some("m0000"));
+        press(&mut app, Key::Enter);
+        assert_eq!(reading(&app), Some("m0000"));
+        press(&mut app, Key::Text("j".into()));
+        assert_eq!(reading(&app), Some("m0001"), "j opens the next message while reading");
+        press(&mut app, Key::Escape);
+        assert_eq!(reading(&app), None);
+        assert_eq!(app.session().unwrap().selected.as_deref(), Some("m0001"), "back on the list, at the same message");
+    }
+
+    #[test]
+    fn only_web_and_mail_links_open() {
+        assert_eq!(safe_link(" https://example.com/a "), Some("https://example.com/a"));
+        assert_eq!(safe_link("MAILTO:ana@example.com"), Some("MAILTO:ana@example.com"));
+        assert_eq!(safe_link("file:///etc/passwd"), None);
+        assert_eq!(safe_link("javascript:alert(1)"), None);
+        assert_eq!(safe_link("zoommtg://join?x"), None);
     }
 }

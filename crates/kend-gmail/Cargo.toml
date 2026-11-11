@@ -6,6 +6,8 @@ license.workspace = true
 
 [dependencies]
 base64 = "0.23.1"
+encoding_rs = "0.8.44"
+html2text = "0.17.4"
 keyring-core = "1.0.1"
 open = "5.4.5"
 rand = "0.10.3"

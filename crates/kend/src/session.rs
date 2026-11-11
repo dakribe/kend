@@ -2,8 +2,10 @@
 //! worker feeding the database.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use kend_store::{AccountId, Label, LabelKind, MessageSummary, Store};
+use kend_gmail::{Gmail, MessageBody};
+use kend_store::{AccountId, Label, LabelKind, Message, MessageSummary, Store};
 
 use crate::sync_worker::{SyncUpdate, SyncWorker};
 
@@ -32,7 +34,41 @@ pub struct Session {
     pub sync: SyncStatus,
     /// Why the last sync failed. Stays until a sync succeeds, so it can be read.
     pub error: Option<String>,
+    /// The open message, when one is open.
+    pub reading: Option<Reading>,
     worker: Option<SyncWorker>,
+    /// The Gmail client sync uses too, for fetching bodies and marking messages read.
+    pub gmail: Option<Arc<Gmail>>,
+}
+
+pub struct Reading {
+    pub message: Message,
+    pub body: BodyState,
+    /// The HTML body as Markdown, converted once when the message opens.
+    pub markdown: Option<String>,
+}
+
+impl Reading {
+    fn new(message: Message, body: BodyState) -> Self {
+        let markdown = message.body_html.as_deref().map(crate::html::to_markdown).filter(|md| !md.trim().is_empty());
+        Self { message, body, markdown }
+    }
+}
+
+pub enum BodyState {
+    /// In `message.body_text`.
+    Ready,
+    Loading,
+    Failed(String),
+}
+
+/// What opening a message needs done off the UI thread.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Opened {
+    /// The body isn't stored yet: fetch it.
+    pub fetch_body: bool,
+    /// It was unread: tell Gmail it's read now.
+    pub mark_read: bool,
 }
 
 pub enum SyncStatus {
@@ -46,7 +82,13 @@ pub enum SyncStatus {
 
 impl Session {
     /// Reads whatever mail is already stored, so a returning user sees their inbox at once.
-    pub fn open(id: u64, store: Store, email: &str, worker: Option<SyncWorker>) -> kend_store::Result<Self> {
+    pub fn open(
+        id: u64,
+        store: Store,
+        email: &str,
+        worker: Option<SyncWorker>,
+        gmail: Option<Arc<Gmail>>,
+    ) -> kend_store::Result<Self> {
         let account = store.upsert_account(email)?;
         let mut session = Self {
             id,
@@ -62,7 +104,9 @@ impl Session {
             labels_collapsed: false,
             sync: SyncStatus::Syncing { fetched: 0 },
             error: None,
+            reading: None,
             worker,
+            gmail,
         };
         session.reload();
         Ok(session)
@@ -131,6 +175,68 @@ impl Session {
         let next = next.min(self.rows.len().checked_sub(1)?);
         self.selected = Some(self.rows[next].gmail_id.clone());
         self.selected.as_deref()
+    }
+
+    /// Opens a message: shown at once from the store, marked read locally straight away.
+    pub fn open_message(&mut self, gmail_id: &str) -> Opened {
+        let Ok(Some(id)) = self.store.find(self.account, gmail_id) else { return Opened::default() };
+        let Ok(Some(message)) = self.store.message(id) else { return Opened::default() };
+        let mark_read = message.summary.unread && self.store.set_unread(self.account, gmail_id, false).unwrap_or(false);
+        let fetch_body = message.body_text.is_none();
+        let body = if fetch_body { BodyState::Loading } else { BodyState::Ready };
+        self.selected = Some(gmail_id.to_string());
+        self.reading = Some(Reading::new(message, body));
+        if mark_read {
+            self.reload();
+        }
+        Opened { fetch_body, mark_read }
+    }
+
+    pub fn close_message(&mut self) {
+        self.reading = None;
+    }
+
+    /// Marks the open message's body as loading again, for a retry.
+    pub fn retry_body(&mut self) -> Option<String> {
+        let reading = self.reading.as_mut()?;
+        reading.body = BodyState::Loading;
+        Some(reading.message.summary.gmail_id.clone())
+    }
+
+    /// A fetched body: stored (so it opens instantly next time and is searchable) and shown if
+    /// its message is still open.
+    pub fn body_loaded(&mut self, gmail_id: &str, result: Result<Option<MessageBody>, String>) {
+        let outcome = match result {
+            Ok(Some(body)) => self
+                .store
+                .find(self.account, gmail_id)
+                .and_then(|id| match id {
+                    Some(id) => self.store.set_body(id, Some(&body.text), body.html.as_deref()).map(|_| Some(id)),
+                    None => Ok(None),
+                })
+                .map_err(|e| e.to_string()),
+            Ok(None) => Err("This message no longer exists in Gmail.".to_string()),
+            Err(err) => Err(err),
+        };
+        let Some(reading) = self.reading.as_mut().filter(|r| r.message.summary.gmail_id == gmail_id) else { return };
+        match outcome {
+            Ok(Some(id)) => {
+                if let Ok(Some(message)) = self.store.message(id) {
+                    *reading = Reading::new(message, BodyState::Ready);
+                } else {
+                    reading.body = BodyState::Ready;
+                }
+            }
+            Ok(None) => reading.body = BodyState::Failed("This message is no longer stored.".into()),
+            Err(err) => reading.body = BodyState::Failed(err),
+        }
+    }
+
+    /// Gmail didn't take the read mark: show the message as unread again, and why.
+    pub fn mark_read_failed(&mut self, gmail_id: &str, error: String) {
+        let _ = self.store.set_unread(self.account, gmail_id, true);
+        self.error = Some(format!("Couldn't mark the message read: {error}"));
+        self.reload();
     }
 
     /// Applies a worker update. Returns true when Google signed the account out.

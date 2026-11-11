@@ -93,6 +93,31 @@ impl Store {
         Ok(true)
     }
 
+    /// Marks one message read or unread, as opening it does. Returns false when it isn't stored.
+    pub fn set_unread(&mut self, account: AccountId, gmail_id: &str, unread: bool) -> Result<bool> {
+        let tx = self.conn.transaction()?;
+        let found: Option<(i64, i64)> = tx
+            .query_row(
+                "SELECT id, received_at FROM messages WHERE account_id = ?1 AND gmail_id = ?2",
+                params![account.0, gmail_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((id, received_at)) = found else { return Ok(false) };
+        tx.execute("UPDATE messages SET unread = ?2 WHERE id = ?1", params![id, unread])?;
+        if unread {
+            tx.execute(
+                "INSERT OR IGNORE INTO message_labels (account_id, label_id, received_at, message_id)
+                 VALUES (?1, 'UNREAD', ?2, ?3)",
+                params![account.0, received_at, id],
+            )?;
+        } else {
+            tx.execute("DELETE FROM message_labels WHERE message_id = ?1 AND label_id = 'UNREAD'", [id])?;
+        }
+        tx.commit()?;
+        Ok(true)
+    }
+
     /// Removes messages by Gmail id. Their labels and search entries go with them.
     pub fn delete_messages(&mut self, account: AccountId, gmail_ids: &[String]) -> Result<usize> {
         let tx = self.conn.transaction()?;
@@ -208,6 +233,12 @@ impl Store {
             |r| r.get(0),
         )?;
         Ok(count.max(0) as u64)
+    }
+
+    /// The local id of a stored message.
+    pub fn find(&self, account: AccountId, gmail_id: &str) -> Result<Option<MessageId>> {
+        let mut stmt = self.conn.prepare_cached("SELECT id FROM messages WHERE account_id = ?1 AND gmail_id = ?2")?;
+        Ok(stmt.query_row(params![account.0, gmail_id], |r| r.get(0)).optional()?.map(MessageId))
     }
 
     /// A whole message, with its body if it has been fetched.

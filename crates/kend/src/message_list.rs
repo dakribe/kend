@@ -78,7 +78,7 @@ fn message_row(k: &Kit, m: &MessageSummary, selected: bool, date: &str) -> El {
         .items_center()
         .radius(k.radius.md)
         .hover(k.c.hover)
-        .on_press(move |s: &mut App| s.select_message(&id))
+        .on_press(move |s: &mut App| s.open_message(&id))
         .child(dot)
         .child(from)
         .child(line)

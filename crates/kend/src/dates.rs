@@ -16,6 +16,12 @@ pub fn label(unix_ms: i64, now: &Zoned) -> String {
     at.strftime(format).to_string()
 }
 
+/// The whole date and time, for an open message: "Mon, Nov 10, 2026 at 9:42 AM".
+pub fn full(unix_ms: i64, now: &Zoned) -> String {
+    let Ok(at) = Timestamp::from_millisecond(unix_ms) else { return String::new() };
+    at.to_zoned(now.time_zone().clone()).strftime("%a, %b %-d, %Y at %-I:%M %p").to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -30,6 +36,12 @@ mod tests {
         assert_eq!(label(at("2026-11-10T14:42:00Z"), &now), "9:42 AM");
         assert_eq!(label(at("2026-11-08T12:00:00Z"), &now), "Nov 8");
         assert_eq!(label(at("2024-03-14T12:00:00Z"), &now), "3/14/24");
+    }
+
+    #[test]
+    fn an_open_message_shows_the_whole_date() {
+        let now: Zoned = "2026-11-10T15:00:00[America/New_York]".parse().unwrap();
+        assert_eq!(full(at("2026-11-10T14:42:00Z"), &now), "Tue, Nov 10, 2026 at 9:42 AM");
     }
 
     #[test]

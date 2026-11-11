@@ -5,6 +5,7 @@ use rune_kit::{Button, ButtonVariant, ControlSize, Kit, Spinner};
 
 use crate::app::{App, Auth};
 use crate::message_list::message_list;
+use crate::reading::reading_view;
 use crate::samples::{self, sample_inbox};
 use crate::session::{Session, SyncStatus};
 use crate::sidebar::{mailbox_name, sidebar, sync_status};
@@ -26,6 +27,18 @@ pub const SCENES: &[Scene] = &[
         }
     }),
     ("large", |s| s.auth = samples::large_inbox(5_000)),
+    ("reading", |s| {
+        s.auth = sample_inbox(SyncStatus::Synced);
+        s.open_message("sample-0");
+    }),
+    ("reading-html", |s| {
+        s.auth = sample_inbox(SyncStatus::Synced);
+        s.open_message("sample-1");
+    }),
+    ("reading-loading", |s| {
+        s.auth = sample_inbox(SyncStatus::Synced);
+        s.open_message("sample-2");
+    }),
 ];
 
 pub fn view(s: &App, cx: &mut Cx<App>) -> El {
@@ -84,8 +97,29 @@ fn mail(
         .key("counts")
         .font(k.ty.ui)
         .color(k.c.text_muted);
-    let toolbar = Toolbar::new()
-        .leading(row().gap(10.0).items_center().child(title).child(counts))
+    let mut toolbar = Toolbar::new();
+    if session.reading.is_some() {
+        toolbar = toolbar.leading(
+            Button::new("Back")
+                .variant(ButtonVariant::Ghost)
+                .help("Back to the list (Esc)")
+                .on_press(|s: &mut App| s.close_message())
+                .build(k)
+                .key("back"),
+        );
+    }
+    let mut toolbar = toolbar.leading(row().gap(10.0).items_center().child(title).child(counts));
+    if session.reading.as_ref().is_some_and(|r| r.message.body_html.is_some()) {
+        toolbar = toolbar.trailing(
+            Button::new("Open in Browser")
+                .variant(ButtonVariant::Ghost)
+                .help("See this email exactly as designed")
+                .on_press(|s: &mut App| s.open_in_browser())
+                .build(k)
+                .key("open-in-browser"),
+        );
+    }
+    let toolbar = toolbar
         .trailing(
             Button::new("Sync now")
                 .variant(ButtonVariant::Ghost)
@@ -106,7 +140,11 @@ fn mail(
     if let Some(error) = &session.error {
         main = main.child(sync_error(k, error));
     }
-    let main = main.child(col().w_full().grow(1.0).min_h(0.0).child(message_list(k, dark, session)));
+    let content = match &session.reading {
+        Some(reading) => reading_view(k, dark, reading),
+        None => message_list(k, dark, session),
+    };
+    let main = main.child(col().w_full().grow(1.0).min_h(0.0).child(content));
     SplitView::new(main)
         .sidebar(&s.sidebar, |s: &mut App| &mut s.sidebar, sidebar(k, &account.email, session))
         .toolbar(toolbar)
@@ -227,6 +265,29 @@ mod tests {
         let rt = render("sync-error");
         assert!(rt.find("sync-error").is_some());
         assert!(rt.find("sync-retry").is_some());
+    }
+
+    #[test]
+    fn an_open_message_shows_its_body_and_a_way_back() {
+        let rt = render("reading");
+        for key in ["reading-subject", "reading-from", "reading-body", "back"] {
+            assert!(rt.find(key).is_some(), "{key} missing");
+        }
+        assert!(rt.find("sample-1").is_none(), "the list is replaced while reading");
+    }
+
+    #[test]
+    fn an_html_message_renders_with_a_browser_option() {
+        let rt = render("reading-html");
+        assert!(rt.find("md-sample-1").is_some(), "the Markdown body, keyed by its memo");
+        assert!(rt.find("open-in-browser").is_some());
+        assert!(render("reading").find("open-in-browser").is_none(), "plain text mail has no HTML to open");
+    }
+
+    #[test]
+    fn a_message_without_a_stored_body_shows_it_loading() {
+        let rt = render("reading-loading");
+        assert!(rt.find("reading-loading").is_some());
     }
 
     #[test]
