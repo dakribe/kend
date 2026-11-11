@@ -19,12 +19,13 @@ use crate::view::message;
 const ROW_HEIGHT: f32 = 40.0;
 
 pub fn message_list(k: &Kit, dark: bool, session: &Session) -> El {
-    if session.rows.is_empty() {
-        let note = match session.sync {
-            SyncStatus::Syncing { .. } => "Loading your mail…",
-            _ => "Nothing here.",
+    if session.visible().is_empty() {
+        let note = match (&session.results, &session.sync) {
+            (Some(_), _) => format!("No messages match “{}”.", session.query()),
+            (None, SyncStatus::Syncing { .. }) => "Loading your mail…".into(),
+            (None, _) => "Nothing here.".into(),
         };
-        return col().key("messages").w_full().h_full().center().child(message(k, note).key("empty"));
+        return col().key("messages").w_full().h_full().center().child(message(k, &note).key("empty"));
     }
     let kit = k.clone();
     let now = Zoned::now();
@@ -33,13 +34,13 @@ pub fn message_list(k: &Kit, dark: bool, session: &Session) -> El {
         .w_full()
         .growth(GrowthSpec::default())
         .virtual_rows(
-            session.rows.len(),
+            session.visible().len(),
             ROW_HEIGHT,
             |s: &App, i| {
-                s.session().and_then(|x| x.rows.get(i)).map_or(Cow::Borrowed(""), |m| Cow::Borrowed(&m.gmail_id))
+                s.session().and_then(|x| x.visible().get(i)).map_or(Cow::Borrowed(""), |m| Cow::Borrowed(&m.gmail_id))
             },
             move |s: &App, i| {
-                let Some((session, m)) = s.session().and_then(|x| Some((x, x.rows.get(i)?))) else { return el() };
+                let Some((session, m)) = s.session().and_then(|x| Some((x, x.visible().get(i)?))) else { return el() };
                 let selected = session.selected.as_deref() == Some(m.gmail_id.as_str());
                 let date = dates::label(m.received_at, &now);
                 // Rebuilt only when what the row shows changes.

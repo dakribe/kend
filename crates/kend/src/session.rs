@@ -2,10 +2,11 @@
 //! worker feeding the database.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use kend_gmail::{Gmail, MessageBody};
 use kend_store::{AccountId, Label, LabelKind, Message, MessageSummary, Store};
+use rune::{Latest, TextEdit, Waker};
 
 use crate::compose::Compose;
 use crate::sync_worker::{SyncUpdate, SyncWorker};
@@ -21,6 +22,12 @@ pub struct Session {
     pub mailbox: String,
     /// The mailbox's newest rows, as far down as the list has scrolled.
     pub rows: Vec<MessageSummary>,
+    /// The search field.
+    pub search: TextEdit,
+    /// Matches for the search field's text, shown instead of the mailbox while it has any.
+    pub results: Option<Vec<MessageSummary>>,
+    /// Searches run on a worker with their own connection, the newest query winning.
+    searches: Option<Searches>,
     /// Bumped whenever `rows` is replaced rather than extended, so the list re-reads its keys.
     pub rows_version: u64,
     /// The selected message's Gmail id.
@@ -45,6 +52,14 @@ pub struct Session {
     /// The Gmail client sync uses too, for fetching bodies and marking messages read.
     pub gmail: Option<Arc<Gmail>>,
 }
+
+struct Searches {
+    db: Arc<Mutex<Store>>,
+    latest: Latest<(String, Vec<MessageSummary>)>,
+}
+
+/// Search results shown at most.
+const RESULTS: usize = 200;
 
 pub struct Reading {
     pub message: Message,
@@ -101,6 +116,9 @@ impl Session {
             account,
             mailbox: "INBOX".into(),
             rows: Vec::new(),
+            search: TextEdit::new(""),
+            results: None,
+            searches: None,
             rows_version: 0,
             selected: None,
             total: 0,
@@ -154,11 +172,76 @@ impl Session {
         }
     }
 
+    /// What the list shows: search results while searching, else the mailbox.
+    pub fn visible(&self) -> &[MessageSummary] {
+        self.results.as_deref().unwrap_or(&self.rows)
+    }
+
+    pub fn query(&self) -> &str {
+        self.search.text.trim()
+    }
+
+    /// Searches run off the UI thread on their own connection, waking the window with results.
+    pub fn search_in_background(&mut self, db: Store, waker: Waker) {
+        self.searches = Some(Searches { db: Arc::new(Mutex::new(db)), latest: Latest::new(waker) });
+    }
+
+    /// The search field changed: search for its text, or show the mailbox again when empty.
+    pub fn search_changed(&mut self) {
+        self.notice = None;
+        self.reading = None;
+        let query = self.query().to_string();
+        if query.is_empty() {
+            if let Some(searches) = &self.searches {
+                searches.latest.cancel();
+            }
+            self.show_results(None);
+            return;
+        }
+        let account = self.account;
+        match &self.searches {
+            Some(searches) => {
+                let db = searches.db.clone();
+                searches.latest.request(query, move |query| {
+                    let store = db.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let results = store.search(account, &query, RESULTS).unwrap_or_default();
+                    (query, results)
+                });
+            }
+            // Without a worker (tests, snapshots), search right here.
+            None => {
+                let results = self.store.search(account, &query, RESULTS).unwrap_or_default();
+                self.show_results(Some(results));
+            }
+        }
+    }
+
+    /// Lands a finished search if it's still for what the field says. True when it landed.
+    pub fn poll_search(&mut self) -> bool {
+        let Some((query, results)) = self.searches.as_ref().and_then(|s| s.latest.take()) else { return false };
+        if query != self.query() {
+            return false;
+        }
+        self.show_results(Some(results));
+        true
+    }
+
+    pub fn clear_search(&mut self) {
+        self.search = TextEdit::new("");
+        self.search_changed();
+    }
+
+    fn show_results(&mut self, results: Option<Vec<MessageSummary>>) {
+        self.results = results;
+        self.selected = None;
+        self.rows_version += 1;
+    }
+
     /// Loads the next page when the list shows rows within half a page of the end. True when
     /// rows were added.
     pub fn load_more(&mut self, visible_end: usize) -> bool {
         let loaded = self.rows.len();
-        if visible_end + PAGE / 2 < loaded || loaded as u64 >= self.total {
+        if self.results.is_some() || visible_end + PAGE / 2 < loaded || loaded as u64 >= self.total {
             return false;
         }
         let after = self.rows.last().map(MessageSummary::cursor);
@@ -174,14 +257,14 @@ impl Session {
     /// Moves the selection `delta` rows (down when positive), starting at the top when nothing
     /// is selected. Returns the newly selected message's id.
     pub fn move_selection(&mut self, delta: isize) -> Option<&str> {
-        let current = self.selected.as_ref().and_then(|id| self.rows.iter().position(|m| &m.gmail_id == id));
+        let current = self.selected.as_ref().and_then(|id| self.visible().iter().position(|m| &m.gmail_id == id));
         let next = match current {
             None => 0,
             Some(i) => i.saturating_add_signed(delta),
         };
         self.load_more(next);
-        let next = next.min(self.rows.len().checked_sub(1)?);
-        self.selected = Some(self.rows[next].gmail_id.clone());
+        let next = next.min(self.visible().len().checked_sub(1)?);
+        self.selected = Some(self.visible()[next].gmail_id.clone());
         self.selected.as_deref()
     }
 

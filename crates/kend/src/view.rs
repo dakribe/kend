@@ -1,7 +1,7 @@
 use kend_gmail::{Account, CancelToken};
 use rune::{Align, Cx, El, col, el, row, text};
 use rune_kit::shell::{SidebarToggle, SplitView, Toolbar};
-use rune_kit::{Button, ButtonVariant, ControlSize, Kit, Spinner};
+use rune_kit::{Button, ButtonVariant, ControlSize, Kit, Spinner, TextInput};
 
 use crate::app::instant;
 use crate::app::{App, Auth};
@@ -37,6 +37,13 @@ pub const SCENES: &[Scene] = &[
         s.auth = sample_inbox(SyncStatus::Synced);
         s.open_message("sample-1");
     }),
+    ("search", |s| {
+        s.auth = samples::large_inbox(400);
+        if let Auth::SignedIn { session: Some(session), .. } = &mut s.auth {
+            session.search = rune::TextEdit::new("invoice");
+            session.search_changed();
+        }
+    }),
     ("compose", |s| {
         s.auth = sample_inbox(SyncStatus::Synced);
         s.compose_new();
@@ -69,7 +76,7 @@ fn instant_root(root: El) -> El {
 
 /// A loading spinner at normal speed under the fast clock.
 pub fn spinner(k: &Kit) -> El {
-    col().time_scale(1.0 / CLOCK).child(Spinner::new().build(k))
+    col().key("spinner").time_scale(1.0 / CLOCK).child(Spinner::new().build(k))
 }
 
 /// The neutral kit with its motion springs made instant, so rune-kit's own controls (sidebar
@@ -134,11 +141,18 @@ fn mail(
     account: &Account,
     session: &Session,
 ) -> El {
-    let title = text(mailbox_name(session)).key("mailbox-title").font(k.ty.ui_medium).color(k.c.text_base);
-    let counts = text(counts(session.total, session.unread_in(&session.mailbox)))
-        .key("counts")
-        .font(k.ty.ui)
-        .color(k.c.text_muted);
+    let searching = session.results.as_ref();
+    let title = text(if searching.is_some() { "Search" } else { mailbox_name(session) })
+        .key("mailbox-title")
+        .font(k.ty.ui_medium)
+        .color(k.c.text_base);
+    let counts = text(match searching {
+        Some(results) => results_count(results.len()),
+        None => counts(session.total, session.unread_in(&session.mailbox)),
+    })
+    .key("counts")
+    .font(k.ty.ui)
+    .color(k.c.text_muted);
     let composing = session.compose.is_some();
     let reading = session.reading.as_ref().filter(|_| !composing);
     let ghost = |label: &str, help: &str, key: &str, press: fn(&mut App)| {
@@ -154,6 +168,23 @@ fn mail(
         toolbar = toolbar.leading(ghost("Back", "Back to the list (Esc)", "back", |s| s.close_message()));
     }
     toolbar = toolbar.leading(row().gap(10.0).items_center().child(title).child(counts));
+    if !composing {
+        let search = TextInput::new(&session.search)
+            .placeholder("Search mail  ⌘F")
+            .label("Search mail")
+            .leading_icon(k.glyph.search)
+            .clear_button()
+            .width(Some(300.0))
+            .on_edit(|s: &mut App| s.search_field())
+            .on_change(|s: &mut App, tx: &mut rune::Tx| {
+                tx.instant();
+                s.search_changed()
+            })
+            .on_key(|s: &mut App, event: &rune::KeyEvent, tx: &mut rune::Tx| s.search_key(event, tx))
+            .build(k)
+            .key("search");
+        toolbar = toolbar.center(search);
+    }
     if let Some(notice) = &session.notice {
         toolbar = toolbar.trailing(text(notice).key("notice").font(k.ty.ui).color(k.c.text_muted));
     }
@@ -228,6 +259,15 @@ fn sync_error(k: &Kit, error: &str) -> El {
         .child(retry)
 }
 
+/// "1 result", "200+ results": the search shows at most 200.
+fn results_count(n: usize) -> String {
+    match n {
+        1 => "1 result".into(),
+        n if n >= 200 => "200+ results".into(),
+        n => format!("{n} results"),
+    }
+}
+
 /// "1,234 messages · 213 unread".
 fn counts(total: u64, unread: u64) -> String {
     let noun = if total == 1 { "message" } else { "messages" };
@@ -268,6 +308,8 @@ mod tests {
         let (_, set) = SCENES.iter().find(|(name, _)| *name == scene).unwrap();
         set(&mut app);
         let mut rt = Runtime::new(app, view, (1100.0, 720.0), Env { system_dark: true, scale: 2.0 });
+        // As `main` wires it, so keys reach kend's shortcuts.
+        rt.on_key = Some(App::on_key);
         rt.frame(0.0);
         rt
     }
@@ -359,12 +401,13 @@ mod tests {
     }
 
     /// Where everything visible sits and how it looks, by key (or path for unkeyed elements).
-    /// Off-screen rows are left out: the virtual list mounts those a few per frame on purpose.
+    /// Off-screen rows are left out (the virtual list mounts those a few per frame on purpose),
+    /// and so are spinners, the one thing allowed to move.
     fn pose(rt: &Runtime<App>) -> Vec<String> {
         let mut pose: Vec<String> = rt
             .elements()
             .into_iter()
-            .filter(|e| e.visible[2] > 0.0 && e.visible[3] > 0.0)
+            .filter(|e| e.visible[2] > 0.0 && e.visible[3] > 0.0 && !e.path.contains("spinner"))
             .map(|e| {
                 let name = e.key.clone().unwrap_or(e.path.clone());
                 let r = e.rect.map(|v| v.round());
@@ -423,6 +466,9 @@ mod tests {
         lands_in_one_frame(&mut rt, "opening to reply", |rt| click(rt, "sample-0"));
         lands_in_one_frame(&mut rt, "Reply", |rt| click(rt, "reply"));
         lands_in_one_frame(&mut rt, "discarding the reply", |rt| click(rt, "discard"));
+        lands_in_one_frame(&mut rt, "focusing search", |rt| click(rt, "search"));
+        lands_in_one_frame(&mut rt, "typing a search", |rt| key(rt, rune::Key::Text("w".into()), plain));
+        lands_in_one_frame(&mut rt, "clearing the search", |rt| key(rt, rune::Key::Escape, plain));
     }
 
     #[test]
@@ -432,7 +478,14 @@ mod tests {
         // A quarter second, sampled every 1/60 s.
         for _ in 0..15 {
             rt.frame(1.0 / 60.0);
-            poses.push(pose(&rt));
+            let spinner: Vec<String> = rt
+                .elements()
+                .into_iter()
+                .filter(|e| e.path.contains("spinner"))
+                .map(|e| format!("{:?} {:.2}", e.rect, e.opacity))
+                .collect();
+            assert!(!spinner.is_empty(), "the spinner shows");
+            poses.push(spinner);
         }
         let changes = poses.windows(2).filter(|w| w[0] != w[1]).count();
         assert!(changes > 0, "the spinner moves while a message loads");
@@ -440,6 +493,41 @@ mod tests {
         // changing smoothly instead of repeating a short loop.
         let distinct: std::collections::HashSet<_> = poses.iter().collect();
         assert!(distinct.len() > 4, "only {} distinct frames", distinct.len());
+    }
+
+    fn type_text(rt: &mut Runtime<App>, text: &str) {
+        for c in text.chars() {
+            key(rt, rune::Key::Text(c.to_string()), rune::Mods::default());
+            rt.frame(1.0 / 60.0);
+        }
+    }
+
+    #[test]
+    fn searching_shows_matches_and_escape_clears() {
+        let mut rt = render("inbox");
+        key(&mut rt, rune::Key::Command('f'), rune::Mods { cmd: true, ..rune::Mods::default() });
+        rt.frame(1.0 / 60.0);
+        type_text(&mut rt, "quarterly");
+        assert!(rt.find("sample-2").is_some(), "Bo's quarterly report matches");
+        assert!(rt.find("sample-0").is_none(), "dinner doesn't");
+        let Auth::SignedIn { session: Some(session), .. } = &rt.state.auth else { panic!() };
+        assert_eq!(session.results.as_ref().map(Vec::len), Some(1));
+
+        key(&mut rt, rune::Key::Escape, rune::Mods::default());
+        rt.frame(1.0 / 60.0);
+        assert!(rt.find("sample-0").is_some(), "the inbox is back");
+        let Auth::SignedIn { session: Some(session), .. } = &rt.state.auth else { panic!() };
+        assert!(session.results.is_none() && session.search.text.is_empty());
+    }
+
+    #[test]
+    fn a_search_with_no_matches_says_so() {
+        let mut rt = render("inbox");
+        key(&mut rt, rune::Key::Text("/".into()), rune::Mods::default());
+        rt.frame(1.0 / 60.0);
+        type_text(&mut rt, "zebra");
+        let empty = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("empty")).and_then(|e| e.text);
+        assert_eq!(empty.as_deref(), Some("No messages match “zebra”."));
     }
 
     #[test]

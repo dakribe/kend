@@ -117,6 +117,9 @@ impl App {
             }
             changed |= self.apply(event);
         }
+        if let Some(session) = self.session_mut() {
+            changed |= session.poll_search();
+        }
         changed | self.open_session()
     }
 
@@ -196,7 +199,11 @@ impl App {
                 events: self.sender.clone(),
                 waker: self.waker.clone(),
             });
-            Session::open(id, Store::open(&path)?, &account.email, Some(worker), Some(gmail))
+            let mut session = Session::open(id, Store::open(&path)?, &account.email, Some(worker), Some(gmail))?;
+            if let Some(waker) = self.waker.clone() {
+                session.search_in_background(Store::open(&path)?, waker);
+            }
+            Ok(session)
         });
         match opened {
             Ok(opened) => *session = Some(Box::new(opened)),
@@ -311,6 +318,41 @@ impl App {
         }
     }
 
+    /// The search field, or a scratch edit before a session opens.
+    pub fn search_field(&mut self) -> &mut TextEdit {
+        if let Auth::SignedIn { session: Some(session), .. } = &mut self.auth {
+            return &mut session.search;
+        }
+        &mut self.scratch
+    }
+
+    pub fn search_changed(&mut self) {
+        if let Some(session) = self.session_mut() {
+            session.search_changed();
+        }
+    }
+
+    /// Keys in the search field: Escape clears it, Return or ↓ moves into the results.
+    pub fn search_key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
+        tx.instant();
+        let Some(session) = self.session_mut() else { return false };
+        match event.key {
+            Key::Escape => {
+                session.clear_search();
+                tx.blur();
+                true
+            }
+            Key::Enter | Key::Down if session.results.is_some() => {
+                tx.blur();
+                if let Some(first) = session.move_selection(1).map(str::to_string) {
+                    tx.scroll_into_view(first);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// The compose field `field`, or a scratch edit when nothing is being written.
     pub fn compose_field(&mut self, field: Field) -> &mut TextEdit {
         if let Auth::SignedIn { session: Some(session), .. } = &mut self.auth
@@ -405,6 +447,10 @@ impl App {
             self.compose_new();
             return true;
         }
+        if event.is_command('f') {
+            tx.focus("search", true);
+            return true;
+        }
         let Some(session) = self.session_mut() else { return false };
         if session.compose.is_some() {
             // Keys typed while writing belong to the fields, never to list shortcuts.
@@ -415,6 +461,14 @@ impl App {
         let delta = match &event.key {
             Key::Escape if reading => {
                 session.close_message();
+                return true;
+            }
+            Key::Escape if session.results.is_some() => {
+                session.clear_search();
+                return true;
+            }
+            Key::Text(t) if plain && t == "/" => {
+                tx.focus("search", true);
                 return true;
             }
             Key::Text(t) if reading && plain && (t == "r" || t == "f") => {
@@ -725,5 +779,32 @@ mod tests {
         assert_eq!(safe_link("file:///etc/passwd"), None);
         assert_eq!(safe_link("javascript:alert(1)"), None);
         assert_eq!(safe_link("zoommtg://join?x"), None);
+    }
+
+    #[test]
+    fn background_searches_land_only_for_the_current_query() {
+        let dir = std::env::temp_dir().join(format!("kend-search-{}", std::process::id()));
+        let path = dir.join("mail.sqlite");
+        let mut store = Store::open(&path).unwrap();
+        let id = store.upsert_account("me@example.com").unwrap();
+        let mut messages = many(3);
+        messages[1].subject = "Quarterly report".into();
+        store.upsert_messages(id, &messages).unwrap();
+        let mut session = Session::open(1, store, "me@example.com", None, None).unwrap();
+        session.search_in_background(Store::open(&path).unwrap(), Arc::new(|| {}));
+
+        session.search.text = "quart".into();
+        session.search_changed();
+        let started = std::time::Instant::now();
+        while !session.poll_search() {
+            assert!(started.elapsed().as_secs() < 5, "search never landed");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let ids: Vec<_> = session.visible().iter().map(|m| m.gmail_id.as_str()).collect();
+        assert_eq!(ids, ["m0001"]);
+
+        session.clear_search();
+        assert_eq!(session.visible().len(), 3, "the mailbox is back");
+        std::fs::remove_dir_all(dir).ok();
     }
 }
