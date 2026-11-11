@@ -253,3 +253,49 @@ fn trash_and_spam_show_only_in_their_own_mailboxes() {
     assert_eq!((unread.get("INBOX"), unread.get("TRASH")), (Some(&1), Some(&1)));
     assert!(store.search(a, "findme", 10).unwrap().is_empty(), "search skips the trash");
 }
+
+#[test]
+fn one_senders_mail_lists_across_mailboxes_in_pages() {
+    let (mut store, a) = store();
+    let mut other = msg("other", 5, &["INBOX"]);
+    other.from = Address::new("Bo", "bo@example.com");
+    let mut shouting = msg("caps", 4, &["Label_1", "UNREAD"]);
+    shouting.from.email = "ANA@Example.com".into();
+    store
+        .upsert_messages(
+            a,
+            &[
+                msg("inbox", 3, &["INBOX", "UNREAD"]),
+                msg("archived", 2, &[]),
+                msg("trashed", 1, &["TRASH"]),
+                other,
+                shouting,
+            ],
+        )
+        .unwrap();
+
+    let first = store.list_from(a, "ana@example.com", None, 2).unwrap();
+    assert_eq!(ids(&first), ["caps", "inbox"], "any mailbox, any case, newest first");
+    let rest = store.list_from(a, "ana@example.com", first.last().map(|m| m.cursor()), 2).unwrap();
+    assert_eq!(ids(&rest), ["archived"], "trash is left out");
+    assert_eq!(store.count_from(a, "ana@example.com").unwrap(), (3, 2));
+    assert_eq!(store.count_from(a, "nobody@example.com").unwrap(), (0, 0));
+}
+
+#[test]
+fn a_senders_mail_is_found_by_index() {
+    let (store, a) = store();
+    let plan: Vec<String> = store
+        .conn
+        .prepare(
+            "EXPLAIN QUERY PLAN SELECT id FROM messages m
+             WHERE m.account_id = ?1 AND m.from_email = ?2 COLLATE NOCASE ORDER BY m.received_at DESC, m.id DESC",
+        )
+        .unwrap()
+        .query_map(rusqlite::params![a.0, "ana@example.com"], |r| r.get(3))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(plan.iter().any(|p| p.contains("messages_by_sender")), "{plan:?}");
+    assert!(!plan.iter().any(|p| p.contains("TEMP B-TREE")), "no sort step: {plan:?}");
+}

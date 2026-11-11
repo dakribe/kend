@@ -58,14 +58,28 @@ pub fn reading_view(k: &Kit, dark: bool, reading: &Reading) -> El {
         .child(text(initial).font(k.ty.ui_medium).color(k.c.text_base));
     let mut who = col()
         .gap(2.0)
-        .grow(1.0)
         .min_w(0.0)
         .child(text(s.from.display()).key("reading-from").font(k.ty.ui_medium).color(k.c.text_base).truncate());
     if !s.from.name.is_empty() {
-        who = who.child(text(&s.from.email).font(k.ty.small).color(k.c.text_muted).selectable(true));
+        who = who.child(text(&s.from.email).font(k.ty.small).color(k.c.text_muted));
     }
+    // The sender is a link to all their mail (⇧F).
+    let who = row()
+        .key("show-sender")
+        .role("button")
+        .label(format!("Show all mail from {}", s.from.display()))
+        .gap(12.0)
+        .items_center()
+        .min_w(0.0)
+        .px(4.0)
+        .py(2.0)
+        .radius(k.radius.md)
+        .hover(k.c.hover)
+        .on_press_tx(instant(|s: &mut App| s.show_sender()))
+        .child(avatar)
+        .child(who);
     let date = text(dates::full(s.received_at, &now)).font(k.ty.small).color(k.c.text_muted);
-    let sender = row().w_full().gap(12.0).items_center().child(avatar).child(who).child(date);
+    let sender = row().w_full().gap(12.0).items_center().child(who.shrink()).child(el().grow(1.0)).child(date);
 
     let mut header = col()
         .w_full()

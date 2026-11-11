@@ -68,6 +68,11 @@ pub const SCENES: &[Scene] = &[
         s.auth = sample_inbox(SyncStatus::Synced);
         s.help = true;
     }),
+    ("sender", |s| {
+        s.auth = samples::large_inbox(40);
+        s.open_message("sample-1");
+        s.show_sender();
+    }),
     ("reading-loading", |s| {
         s.auth = sample_inbox(SyncStatus::Synced);
         s.open_message("sample-2");
@@ -127,6 +132,7 @@ const SHORTCUTS: &[(&str, &[Shortcut])] = &[
             (&["Z"], "Undo"),
             (&["R"], "Reply"),
             (&["F"], "Forward"),
+            (&["⇧F"], "All mail from this sender"),
             (&["⌘N"], "New message"),
             (&["⌘Return"], "Send"),
             (&["⌘K"], "Command palette"),
@@ -241,13 +247,16 @@ fn mail(
     session: &Session,
 ) -> El {
     let searching = session.results.as_ref();
-    let title = text(if searching.is_some() { "Search" } else { mailbox_name(session) })
-        .key("mailbox-title")
-        .font(k.ty.ui_medium)
-        .color(k.c.text_base);
-    let counts = text(match searching {
-        Some(results) => results_count(results.len()),
-        None => counts(session.total, session.unread_in(&session.mailbox)),
+    let title = match (searching, &session.sender) {
+        (Some(_), _) => "Search",
+        (None, Some(sender)) => sender.address.display(),
+        (None, None) => mailbox_name(session),
+    };
+    let title = text(title).key("mailbox-title").font(k.ty.ui_medium).color(k.c.text_base).truncate().max_w(240.0);
+    let counts = text(match (searching, &session.sender) {
+        (Some(results), _) => results_count(results.len()),
+        (None, Some(sender)) => counts(session.total, sender.unread),
+        (None, None) => counts(session.total, session.unread_in(&session.mailbox)),
     })
     .key("counts")
     .font(k.ty.ui)
@@ -267,7 +276,8 @@ fn mail(
     };
     // The toolbar holds where you are, search and New Message. Message actions live in the
     // open message's own bar, and account actions at the foot of the sidebar.
-    let mut toolbar = Toolbar::new().leading(row().gap(10.0).items_center().child(title).child(counts));
+    let leading = row().gap(10.0).items_center().min_w(0.0).child(title).child(counts);
+    let mut toolbar = Toolbar::new().leading(leading);
     if !composing {
         let search = TextInput::new(&session.search)
             .placeholder("Search mail  ⌘F")
@@ -296,6 +306,13 @@ fn mail(
     let mut main = col().w_full().h_full().min_h(0.0);
     if let Some(error) = &session.error {
         main = main.child(sync_error(k, error));
+    }
+    if let Some(sender) = &session.sender
+        && !reading
+        && !composing
+        && searching.is_none()
+    {
+        main = main.child(sender_strip(k, &sender.address.email, mailbox_name(session)));
     }
     if let Some(notice) = &session.notice {
         main = main.child(notice_strip(k, notice, session.last_move.is_some()));
@@ -326,6 +343,34 @@ pub fn ghost(k: &Kit, label: &str, help: &str, key: &str, press: fn(&mut App)) -
         .on_press_tx(instant(press))
         .build(k)
         .key(key.to_string())
+}
+
+/// Above a sender's mail: the address (a newsletter's name rarely says where it comes from)
+/// and the way back.
+fn sender_strip(k: &Kit, email: &str, mailbox: &str) -> El {
+    let back = Button::new(format!("Back to {mailbox}"))
+        .variant(ButtonVariant::Ghost)
+        .help("Back to the mailbox (Esc)")
+        .on_press_tx(instant(|s: &mut App| s.leave_sender()))
+        .build(k)
+        .key("leave-sender");
+    row()
+        .key("sender-strip")
+        .w_full()
+        .px(16.0)
+        .py(4.0)
+        .gap(8.0)
+        .items_center()
+        .child(
+            text(format!("All mail from {email}"))
+                .key("sender-email")
+                .font(k.ty.ui)
+                .color(k.c.text_muted)
+                .truncate()
+                .grow(1.0)
+                .min_w(0.0),
+        )
+        .child(back)
 }
 
 /// A quiet line above the list: "Archived", with Undo when the last move can be undone.
@@ -600,6 +645,11 @@ mod tests {
         lands_in_one_frame(&mut rt, "filtering the palette", |rt| key(rt, rune::Key::Text("s".into()), plain));
         lands_in_one_frame(&mut rt, "moving in the palette", |rt| key(rt, rune::Key::Down, plain));
         lands_in_one_frame(&mut rt, "closing the palette", |rt| key(rt, rune::Key::Escape, plain));
+        lands_in_one_frame(&mut rt, "showing a sender's mail", |rt| key(rt, rune::Key::Text("F".into()), plain));
+        lands_in_one_frame(&mut rt, "leaving the sender", |rt| key(rt, rune::Key::Escape, plain));
+        lands_in_one_frame(&mut rt, "opening to see the sender", |rt| click(rt, "sample-0"));
+        lands_in_one_frame(&mut rt, "clicking the sender", |rt| click(rt, "show-sender"));
+        lands_in_one_frame(&mut rt, "Back to Inbox", |rt| click(rt, "leave-sender"));
         lands_in_one_frame(&mut rt, "focusing search", |rt| click(rt, "search"));
         lands_in_one_frame(&mut rt, "typing a search", |rt| key(rt, rune::Key::Text("w".into()), plain));
         lands_in_one_frame(&mut rt, "clearing the search", |rt| key(rt, rune::Key::Escape, plain));
@@ -758,6 +808,17 @@ mod tests {
         assert!(rt.find("archive").is_some() && rt.find("delete").is_some());
         let Auth::SignedIn { session: Some(session), .. } = &rt.state.auth else { panic!() };
         assert!(session.reading.is_none(), "the checkbox doesn't open the message");
+    }
+
+    #[test]
+    fn the_sender_view_names_the_sender_and_lists_only_their_mail() {
+        let rt = render("sender");
+        let text = |key: &str| rt.elements().into_iter().find(|e| e.key.as_deref() == Some(key)).and_then(|e| e.text);
+        assert_eq!(text("mailbox-title").as_deref(), Some("GitHub"));
+        assert_eq!(text("counts").as_deref(), Some("1 message"));
+        assert_eq!(text("sender-email").as_deref(), Some("All mail from noreply@github.com"));
+        assert!(rt.find("sample-1").is_some() && rt.find("sample-0").is_none());
+        assert!(rt.find("leave-sender").is_some());
     }
 
     #[test]

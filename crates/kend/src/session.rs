@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use kend_gmail::{Gmail, MessageBody};
-use kend_store::{AccountId, Label, LabelKind, Message, MessageSummary, Store};
+use kend_store::{AccountId, Address, Cursor, Label, LabelKind, Message, MessageSummary, Store};
 use rune::{Latest, TextEdit, Waker};
 
 use crate::compose::Compose;
@@ -20,7 +20,9 @@ pub struct Session {
     account: AccountId,
     /// The selected mailbox's Gmail label id.
     pub mailbox: String,
-    /// The mailbox's newest rows, as far down as the list has scrolled.
+    /// Everything from one sender, shown instead of the mailbox until left.
+    pub sender: Option<Sender>,
+    /// The mailbox's (or sender's) newest rows, as far down as the list has scrolled.
     pub rows: Vec<MessageSummary>,
     /// The search field.
     pub search: TextEdit,
@@ -37,7 +39,7 @@ pub struct Session {
     pub checked: HashSet<String>,
     /// Where a Shift-click range starts: the last row checked or unchecked on its own.
     anchor: Option<String>,
-    /// Messages in the selected mailbox.
+    /// Messages in the selected mailbox, or from the sender being shown.
     pub total: u64,
     /// Unread messages per label id.
     pub unread: HashMap<String, u64>,
@@ -104,6 +106,12 @@ pub struct Undo {
     pub action: Move,
 }
 
+/// The sender whose mail the list shows, across every mailbox but Trash and Spam.
+pub struct Sender {
+    pub address: Address,
+    pub unread: u64,
+}
+
 struct Searches {
     db: Arc<Mutex<Store>>,
     latest: Latest<(String, Vec<MessageSummary>)>,
@@ -166,6 +174,7 @@ impl Session {
             store,
             account,
             mailbox: "INBOX".into(),
+            sender: None,
             rows: Vec::new(),
             search: TextEdit::new(""),
             results: None,
@@ -197,8 +206,9 @@ impl Session {
 
     pub fn select(&mut self, mailbox: &str) {
         self.notice = None;
-        if self.mailbox != mailbox {
+        if self.mailbox != mailbox || self.sender.is_some() {
             self.mailbox = mailbox.to_string();
+            self.sender = None;
             self.rows.clear();
             self.selected = None;
             self.clear_checked();
@@ -206,16 +216,26 @@ impl Session {
         }
     }
 
-    /// Re-reads the selected mailbox (as many rows as are loaded), the unread counts and the
-    /// labels. All local: about a millisecond for a few hundred rows.
+    /// Re-reads the selected mailbox or sender (as many rows as are loaded), the unread counts
+    /// and the labels. All local: about a millisecond for a few hundred rows.
     pub fn reload(&mut self) {
         let loaded = self.rows.len().max(PAGE);
-        if let Ok(rows) = self.store.list(self.account, &self.mailbox, None, loaded) {
+        if let Ok(rows) = self.page(None, loaded) {
             self.rows = rows;
             self.rows_version += 1;
         }
-        if let Ok(total) = self.store.count(self.account, &self.mailbox) {
-            self.total = total;
+        match &mut self.sender {
+            Some(sender) => {
+                if let Ok((total, unread)) = self.store.count_from(self.account, &sender.address.email) {
+                    self.total = total;
+                    sender.unread = unread;
+                }
+            }
+            None => {
+                if let Ok(total) = self.store.count(self.account, &self.mailbox) {
+                    self.total = total;
+                }
+            }
         }
         if let Ok(unread) = self.store.unread_counts(self.account) {
             self.unread = unread;
@@ -227,7 +247,57 @@ impl Session {
         }
     }
 
-    /// What the list shows: search results while searching, else the mailbox.
+    /// One page of what the list shows when not searching: the sender's mail, else the mailbox.
+    fn page(&self, after: Option<Cursor>, limit: usize) -> kend_store::Result<Vec<MessageSummary>> {
+        match &self.sender {
+            Some(sender) => self.store.list_from(self.account, &sender.address.email, after, limit),
+            None => self.store.list(self.account, &self.mailbox, after, limit),
+        }
+    }
+
+    /// The sender of the open message, else of the selected row.
+    pub fn focused_sender(&self) -> Option<&Address> {
+        if let Some(reading) = &self.reading {
+            return Some(&reading.message.summary.from);
+        }
+        let selected = self.selected.as_ref()?;
+        self.visible().iter().find(|m| &m.gmail_id == selected).map(|m| &m.from)
+    }
+
+    /// Shows everything from `address` in place of the mailbox. The message you came from stays
+    /// selected, so you can see where it sits among the rest.
+    pub fn show_sender(&mut self, address: Address) {
+        if address.email.is_empty() {
+            return;
+        }
+        let came_from = self.reading.as_ref().map(|r| r.message.summary.gmail_id.clone()).or(self.selected.clone());
+        if !self.search.text.is_empty() {
+            self.clear_search();
+        }
+        self.notice = None;
+        self.reading = None;
+        self.sender = Some(Sender { address, unread: 0 });
+        self.switch_list(came_from);
+    }
+
+    /// Back from a sender's mail to the mailbox.
+    pub fn leave_sender(&mut self) {
+        if self.sender.take().is_some() {
+            self.notice = None;
+            let came_from = self.selected.clone();
+            self.switch_list(came_from);
+        }
+    }
+
+    /// Re-reads the list for a new source, keeping `selected` when it's still listed.
+    fn switch_list(&mut self, selected: Option<String>) {
+        self.rows.clear();
+        self.clear_checked();
+        self.reload();
+        self.selected = selected.filter(|id| self.rows.iter().any(|m| &m.gmail_id == id));
+    }
+
+    /// What the list shows: search results while searching, else the mailbox or sender.
     pub fn visible(&self) -> &[MessageSummary] {
         self.results.as_deref().unwrap_or(&self.rows)
     }
@@ -301,7 +371,7 @@ impl Session {
             return false;
         }
         let after = self.rows.last().map(MessageSummary::cursor);
-        match self.store.list(self.account, &self.mailbox, after, PAGE) {
+        match self.page(after, PAGE) {
             Ok(more) if !more.is_empty() => {
                 self.rows.extend(more);
                 true

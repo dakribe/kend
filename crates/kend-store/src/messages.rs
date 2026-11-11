@@ -173,6 +173,51 @@ impl Store {
         Ok(rows)
     }
 
+    /// One page of everything from `email` outside Trash and Spam, newest first. Addresses
+    /// match ignoring case.
+    pub fn list_from(
+        &self,
+        account: AccountId,
+        email: &str,
+        after: Option<Cursor>,
+        limit: usize,
+    ) -> Result<Vec<MessageSummary>> {
+        let hidden = visible_outside_trash("m.id");
+        let base = format!(
+            "SELECT {SUMMARY_COLUMNS} FROM messages m
+             WHERE m.account_id = ?1 AND m.from_email = ?2 COLLATE NOCASE AND {hidden}"
+        );
+        let order = "ORDER BY m.received_at DESC, m.id DESC LIMIT ?3";
+        let limit = limit as i64;
+        let rows = match after {
+            None => {
+                let mut stmt = self.conn.prepare_cached(&format!("{base} {order}"))?;
+                stmt.query_map(params![account.0, email, limit], summary_from_row)?.collect::<Result<Vec<_>, _>>()?
+            }
+            Some(c) => {
+                let mut stmt =
+                    self.conn.prepare_cached(&format!("{base} AND (m.received_at, m.id) < (?4, ?5) {order}"))?;
+                stmt.query_map(params![account.0, email, limit, c.received_at, c.id.0], summary_from_row)?
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+        };
+        Ok(rows)
+    }
+
+    /// How many messages `email` sent (outside Trash and Spam), and how many of them are unread.
+    pub fn count_from(&self, account: AccountId, email: &str) -> Result<(u64, u64)> {
+        let hidden = visible_outside_trash("m.id");
+        let (total, unread): (i64, i64) = self.conn.query_row(
+            &format!(
+                "SELECT count(*), coalesce(sum(m.unread), 0) FROM messages m
+                 WHERE m.account_id = ?1 AND m.from_email = ?2 COLLATE NOCASE AND {hidden}"
+            ),
+            params![account.0, email],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        Ok((total.max(0) as u64, unread.max(0) as u64))
+    }
+
     /// Which of `gmail_ids` aren't stored yet, in the order given.
     pub fn missing(&self, account: AccountId, gmail_ids: &[String]) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare_cached("SELECT 1 FROM messages WHERE account_id = ?1 AND gmail_id = ?2")?;

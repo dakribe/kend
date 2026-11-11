@@ -91,6 +91,10 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE accounts ADD COLUMN backfill_before INTEGER;
     ALTER TABLE accounts ADD COLUMN backfill_done INTEGER NOT NULL DEFAULT 0;
     ",
+    // 4: one sender's mail, newest first, without scanning every message.
+    "
+    CREATE INDEX messages_by_sender ON messages (account_id, from_email COLLATE NOCASE, received_at, id);
+    ",
 ];
 
 pub(crate) fn migrate(conn: &mut Connection) -> Result<()> {

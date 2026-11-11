@@ -292,6 +292,20 @@ impl App {
         }
     }
 
+    /// Shows everything from the open or selected message's sender (⇧F).
+    pub fn show_sender(&mut self) {
+        let Some(session) = self.session_mut() else { return };
+        if let Some(address) = session.focused_sender().cloned() {
+            session.show_sender(address);
+        }
+    }
+
+    pub fn leave_sender(&mut self) {
+        if let Some(session) = self.session_mut() {
+            session.leave_sender();
+        }
+    }
+
     pub fn toggle_labels(&mut self) {
         if let Some(session) = self.session_mut() {
             session.labels_collapsed = !session.labels_collapsed;
@@ -667,6 +681,14 @@ impl App {
             }
             Key::Escape if session.results.is_some() => {
                 session.clear_search();
+                return true;
+            }
+            Key::Escape if session.sender.is_some() => {
+                session.leave_sender();
+                return true;
+            }
+            Key::Text(t) if plain && t == "F" => {
+                self.show_sender();
                 return true;
             }
             Key::Text(t) if plain && t == "/" => {
@@ -1255,6 +1277,58 @@ mod tests {
         session.open_message("m0000");
         session.mark(&["m0000".into()], Mark::Star);
         assert!(session.reading.as_ref().unwrap().message.summary.starred);
+    }
+
+    #[test]
+    fn shift_f_shows_the_senders_mail_and_escape_goes_back() {
+        let mut app = App::with_client(None);
+        let mut store = Store::open_in_memory().unwrap();
+        let id = store.upsert_account("me@example.com").unwrap();
+        let from = |gmail_id: &str, email: &str, received_at: i64, labels: &[&str]| NewMessage {
+            gmail_id: gmail_id.into(),
+            from: Address::new("", email),
+            received_at,
+            label_ids: labels.iter().map(|l| l.to_string()).collect(),
+            ..NewMessage::default()
+        };
+        let messages = [
+            from("news-1", "news@shop.com", 4, &["INBOX", "UNREAD"]),
+            from("ana", "ana@example.com", 3, &["INBOX"]),
+            from("news-2", "news@shop.com", 2, &[]),
+            from("news-3", "news@shop.com", 1, &["INBOX", "UNREAD"]),
+        ];
+        store.upsert_messages(id, &messages).unwrap();
+        let session = Session::open(1, store, "me@example.com", None, None).unwrap();
+        app.auth = Auth::SignedIn { account: account(), session: Some(Box::new(session)) };
+
+        press(&mut app, Key::Text("j".into()));
+        press(&mut app, Key::Text("F".into()));
+        let session = app.session().unwrap();
+        assert_eq!(visible_ids(session), ["news-1", "news-2", "news-3"], "archived mail too");
+        assert_eq!((session.total, session.sender.as_ref().map(|s| s.unread)), (3, Some(2)));
+        assert_eq!(session.selected.as_deref(), Some("news-1"), "still on the message you came from");
+
+        press(&mut app, Key::Text("j".into()));
+        press(&mut app, Key::Enter);
+        press(&mut app, Key::Escape);
+        assert!(app.session().unwrap().sender.is_some(), "Escape from a message returns to the sender");
+        press(&mut app, Key::Escape);
+        let session = app.session().unwrap();
+        assert!(session.sender.is_none());
+        assert_eq!(visible_ids(session), ["news-1", "ana", "news-3"]);
+        assert_eq!(session.selected, None, "news-2 isn't in the inbox");
+    }
+
+    #[test]
+    fn choosing_a_mailbox_leaves_the_sender() {
+        let mut app = App::with_client(None);
+        signed_in_with(&mut app, 3, false);
+        let session = app.session_mut().unwrap();
+        session.show_sender(Address::new("Ana", "ana@example.com"));
+        assert!(session.sender.is_some() && session.rows.is_empty());
+        session.select("INBOX");
+        assert!(session.sender.is_none());
+        assert_eq!(session.rows.len(), 3);
     }
 
     #[test]

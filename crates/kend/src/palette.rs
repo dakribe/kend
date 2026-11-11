@@ -7,7 +7,7 @@ use rune_kit::{Keybind, Kit, TextInput};
 
 use crate::app::App;
 use crate::session::{Mark, Move};
-use crate::sidebar::{MAILBOXES, leaf};
+use crate::sidebar::{MAILBOXES, leaf, mailbox_name};
 
 /// Rows shown at most; typing narrows the rest.
 const SHOWN: usize = 12;
@@ -42,6 +42,9 @@ pub enum Command {
     SyncNow,
     ToggleSidebar,
     OpenInBrowser,
+    /// Everything from the open or selected message's sender.
+    ShowSender,
+    LeaveSender,
     Shortcuts,
     SignOut,
     /// Go to a mailbox or label, by its Gmail label id.
@@ -100,6 +103,12 @@ pub fn entries(app: &App) -> Vec<Entry> {
         };
         out.push(Entry::new(MarkRead, read, &["⇧I"]));
         out.push(Entry::new(MarkUnread, unread, &["⇧U"]));
+    }
+    if !composing && let Some(from) = session.focused_sender() {
+        out.push(Entry::new(ShowSender, format!("Show All from {}", from.display()), &["⇧F"]));
+    }
+    if reading.is_none() && !composing && session.sender.is_some() {
+        out.push(Entry::new(LeaveSender, format!("Back to {}", mailbox_name(session)), &["Esc"]));
     }
     if session.last_move.is_some() {
         out.push(Entry::new(Undo, "Undo", &["Z"]));
@@ -231,6 +240,8 @@ impl App {
             Command::SyncNow => self.sync_now(),
             Command::ToggleSidebar => self.sidebar.toggle(),
             Command::OpenInBrowser => self.open_in_browser(),
+            Command::ShowSender => self.show_sender(),
+            Command::LeaveSender => self.leave_sender(),
             Command::Shortcuts => self.help = true,
             Command::SignOut => self.sign_out(),
             Command::Go(mailbox) => {
