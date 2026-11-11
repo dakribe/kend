@@ -4,6 +4,7 @@ use rune_kit::shell::{SidebarToggle, SplitView, Toolbar};
 use rune_kit::{Button, ButtonVariant, ControlSize, Kit, Spinner};
 
 use crate::app::{App, Auth};
+use crate::compose::compose_view;
 use crate::message_list::message_list;
 use crate::reading::reading_view;
 use crate::samples::{self, sample_inbox};
@@ -34,6 +35,15 @@ pub const SCENES: &[Scene] = &[
     ("reading-html", |s| {
         s.auth = sample_inbox(SyncStatus::Synced);
         s.open_message("sample-1");
+    }),
+    ("compose", |s| {
+        s.auth = sample_inbox(SyncStatus::Synced);
+        s.compose_new();
+    }),
+    ("reply", |s| {
+        s.auth = sample_inbox(SyncStatus::Synced);
+        s.open_message("sample-0");
+        s.reply(false);
     }),
     ("reading-loading", |s| {
         s.auth = sample_inbox(SyncStatus::Synced);
@@ -97,52 +107,49 @@ fn mail(
         .key("counts")
         .font(k.ty.ui)
         .color(k.c.text_muted);
+    let composing = session.compose.is_some();
+    let reading = session.reading.as_ref().filter(|_| !composing);
+    let ghost = |label: &str, help: &str, key: &str, press: fn(&mut App)| {
+        Button::new(label).variant(ButtonVariant::Ghost).help(help).on_press(press).build(k).key(key.to_string())
+    };
     let mut toolbar = Toolbar::new();
-    if session.reading.is_some() {
-        toolbar = toolbar.leading(
-            Button::new("Back")
-                .variant(ButtonVariant::Ghost)
-                .help("Back to the list (Esc)")
-                .on_press(|s: &mut App| s.close_message())
-                .build(k)
-                .key("back"),
-        );
+    if reading.is_some() {
+        toolbar = toolbar.leading(ghost("Back", "Back to the list (Esc)", "back", |s| s.close_message()));
     }
-    let mut toolbar = toolbar.leading(row().gap(10.0).items_center().child(title).child(counts));
-    if session.reading.as_ref().is_some_and(|r| r.message.body_html.is_some()) {
-        toolbar = toolbar.trailing(
-            Button::new("Open in Browser")
-                .variant(ButtonVariant::Ghost)
-                .help("See this email exactly as designed")
-                .on_press(|s: &mut App| s.open_in_browser())
-                .build(k)
-                .key("open-in-browser"),
-        );
+    toolbar = toolbar.leading(row().gap(10.0).items_center().child(title).child(counts));
+    if let Some(notice) = &session.notice {
+        toolbar = toolbar.trailing(text(notice).key("notice").font(k.ty.ui).color(k.c.text_muted));
+    }
+    if let Some(reading) = reading {
+        toolbar = toolbar.trailing(ghost("Reply", "Reply (R)", "reply", |s| s.reply(false))).trailing(ghost(
+            "Forward",
+            "Forward (F)",
+            "forward",
+            |s| s.reply(true),
+        ));
+        if reading.message.body_html.is_some() {
+            toolbar = toolbar.trailing(ghost(
+                "Open in Browser",
+                "See this email exactly as designed",
+                "open-in-browser",
+                |s| s.open_in_browser(),
+            ));
+        }
+    }
+    if !composing {
+        toolbar = toolbar.trailing(ghost("New Message", "New message (⌘N)", "new-message", |s| s.compose_new()));
     }
     let toolbar = toolbar
-        .trailing(
-            Button::new("Sync now")
-                .variant(ButtonVariant::Ghost)
-                .help(sync_status(session))
-                .on_press(|s: &mut App| s.sync_now())
-                .build(k)
-                .key("sync-now"),
-        )
-        .trailing(
-            Button::new("Sign out")
-                .variant(ButtonVariant::Ghost)
-                .help(format!("Signed in as {}", account.email))
-                .on_press(|s: &mut App| s.sign_out())
-                .build(k)
-                .key("sign-out"),
-        );
+        .trailing(ghost("Sync now", &sync_status(session), "sync-now", |s| s.sync_now()))
+        .trailing(ghost("Sign out", &format!("Signed in as {}", account.email), "sign-out", |s| s.sign_out()));
     let mut main = col().w_full().h_full().min_h(0.0);
     if let Some(error) = &session.error {
         main = main.child(sync_error(k, error));
     }
-    let content = match &session.reading {
-        Some(reading) => reading_view(k, dark, reading),
-        None => message_list(k, dark, session),
+    let content = match (&session.compose, &session.reading) {
+        (Some(compose), _) => compose_view(k, compose),
+        (None, Some(reading)) => reading_view(k, dark, reading),
+        (None, None) => message_list(k, dark, session),
     };
     let main = main.child(col().w_full().grow(1.0).min_h(0.0).child(content));
     SplitView::new(main)
@@ -288,6 +295,30 @@ mod tests {
     fn a_message_without_a_stored_body_shows_it_loading() {
         let rt = render("reading-loading");
         assert!(rt.find("reading-loading").is_some());
+    }
+
+    #[test]
+    fn compose_replaces_the_list_and_reply_prefills() {
+        let rt = render("compose");
+        for key in ["compose-to", "compose-cc", "compose-subject", "compose-body", "send", "discard"] {
+            assert!(rt.find(key).is_some(), "{key} missing");
+        }
+        assert!(rt.find("new-message").is_none());
+        let rt = render("reply");
+        let Auth::SignedIn { session: Some(session), .. } = &rt.state.auth else { panic!() };
+        let compose = session.compose.as_ref().unwrap();
+        assert_eq!(compose.subject.text, "Re: Dinner on Friday?");
+        assert_eq!(compose.to.text, "Ana Lima <ana@example.com>");
+    }
+
+    #[test]
+    fn sending_with_no_recipient_explains_why() {
+        let mut rt = render("compose");
+        let (x, y) = rt.find("send").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+        assert!(rt.find("compose-error").is_some());
     }
 
     #[test]

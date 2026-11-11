@@ -7,15 +7,19 @@ use std::thread;
 
 use kend_gmail::{Account, CancelToken, ClientCredentials, Error, Gmail, MessageBody};
 use kend_store::Store;
-use rune::{Key, KeyEvent, Tx, Waker};
+use rune::{Key, KeyEvent, TextEdit, Tx, Waker};
 use rune_kit::PaneState;
 use rune_kit::shell;
 
+use crate::compose::{Compose, Field, SendState};
 use crate::session::Session;
 use crate::sync_worker::{Spec, SyncUpdate, SyncWorker};
 
 pub struct App {
     pub auth: Auth,
+    /// Stands in for a compose field when no message is being written, so field handlers
+    /// always have something to edit.
+    scratch: TextEdit,
     /// The sidebar's width and whether it's open.
     pub sidebar: PaneState,
     client: Option<ClientCredentials>,
@@ -62,6 +66,11 @@ pub enum Event {
         gmail_id: String,
         result: Result<Option<MessageBody>, String>,
     },
+    /// Gmail's answer to sending a message.
+    Sent {
+        session: u64,
+        result: Result<(), String>,
+    },
     /// Gmail's answer to marking a message read.
     MarkedRead {
         session: u64,
@@ -80,6 +89,7 @@ impl App {
         let auth = if client.is_some() { Auth::Loading } else { Auth::NotConfigured };
         Self {
             auth,
+            scratch: TextEdit::new(""),
             sidebar: PaneState::new(232.0).range(180.0, 360.0),
             client,
             sender,
@@ -135,6 +145,23 @@ impl App {
                 if session.id == id =>
             {
                 session.body_loaded(&gmail_id, result);
+                return true;
+            }
+            (Auth::SignedIn { session: Some(session), .. }, Event::Sent { session: id, result })
+                if session.id == id =>
+            {
+                match result {
+                    Ok(()) => {
+                        session.compose = None;
+                        session.notice = Some("Message sent".into());
+                        session.sync_now();
+                    }
+                    Err(err) => {
+                        if let Some(compose) = &mut session.compose {
+                            compose.state = SendState::Failed(format!("Couldn't send: {err}"));
+                        }
+                    }
+                }
                 return true;
             }
             (
@@ -260,6 +287,73 @@ impl App {
         });
     }
 
+    pub fn compose_new(&mut self) {
+        if let Some(session) = self.session_mut() {
+            session.notice = None;
+            session.compose = Some(Compose::new());
+        }
+    }
+
+    /// Replies to (or forwards) the open message.
+    pub fn reply(&mut self, forward: bool) {
+        let Some(session) = self.session_mut() else { return };
+        let Some(reading) = &session.reading else { return };
+        let now = jiff::Zoned::now();
+        let compose =
+            if forward { Compose::forward(&reading.message, &now) } else { Compose::reply(&reading.message, &now) };
+        session.notice = None;
+        session.compose = Some(compose);
+    }
+
+    pub fn discard_compose(&mut self) {
+        if let Some(session) = self.session_mut() {
+            session.compose = None;
+        }
+    }
+
+    /// The compose field `field`, or a scratch edit when nothing is being written.
+    pub fn compose_field(&mut self, field: Field) -> &mut TextEdit {
+        if let Auth::SignedIn { session: Some(session), .. } = &mut self.auth
+            && let Some(compose) = &mut session.compose
+        {
+            return compose.field(field);
+        }
+        &mut self.scratch
+    }
+
+    /// Sends the message being written, in the background. A reply first fetches the headers
+    /// that keep it in its conversation.
+    pub fn send(&mut self) {
+        let Auth::SignedIn { account, session: Some(session) } = &mut self.auth else { return };
+        let Some(compose) = &mut session.compose else { return };
+        if matches!(compose.state, SendState::Sending) {
+            return;
+        }
+        let mut outgoing = match compose.outgoing(&account.email) {
+            Ok(outgoing) => outgoing,
+            Err(err) => {
+                compose.state = SendState::Failed(err);
+                return;
+            }
+        };
+        let Some(gmail) = session.gmail.clone() else {
+            compose.state = SendState::Failed("Not connected to Gmail.".into());
+            return;
+        };
+        compose.state = SendState::Sending;
+        let replying_to = compose.replying_to().map(str::to_string);
+        let id = session.id;
+        self.spawn("send", move || {
+            let result = (|| {
+                if let Some(original) = replying_to {
+                    (outgoing.in_reply_to, outgoing.references) = gmail.reply_headers(&original)?;
+                }
+                gmail.send(&outgoing)
+            })();
+            Event::Sent { session: id, result: result.map(|_| ()).map_err(|e| e.to_string()) }
+        });
+    }
+
     /// Opens a link from an email in the default browser. Only web and mail links: an email
     /// shouldn't be able to launch apps through custom URL schemes or open local files.
     pub fn open_link(&mut self, url: &str) {
@@ -305,12 +399,25 @@ impl App {
             self.sidebar.toggle();
             return true;
         }
+        if event.is_command('n') {
+            self.compose_new();
+            return true;
+        }
         let Some(session) = self.session_mut() else { return false };
+        if session.compose.is_some() {
+            // Keys typed while writing belong to the fields, never to list shortcuts.
+            return false;
+        }
         let reading = session.reading.is_some();
         let plain = !(event.mods.cmd || event.mods.ctrl || event.mods.alt);
         let delta = match &event.key {
             Key::Escape if reading => {
                 session.close_message();
+                return true;
+            }
+            Key::Text(t) if reading && plain && (t == "r" || t == "f") => {
+                let forward = t == "f";
+                self.reply(forward);
                 return true;
             }
             Key::Enter if !reading => {

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use kend_gmail::{Gmail, MessageBody};
 use kend_store::{AccountId, Label, LabelKind, Message, MessageSummary, Store};
 
+use crate::compose::Compose;
 use crate::sync_worker::{SyncUpdate, SyncWorker};
 
 /// Rows read from the database at a time. The list loads the next page as you near the end.
@@ -36,6 +37,10 @@ pub struct Session {
     pub error: Option<String>,
     /// The open message, when one is open.
     pub reading: Option<Reading>,
+    /// A message being written. Shown over the list or the open message until sent or discarded.
+    pub compose: Option<Compose>,
+    /// A passing confirmation ("Message sent"), cleared by the next thing the user does.
+    pub notice: Option<String>,
     worker: Option<SyncWorker>,
     /// The Gmail client sync uses too, for fetching bodies and marking messages read.
     pub gmail: Option<Arc<Gmail>>,
@@ -105,6 +110,8 @@ impl Session {
             sync: SyncStatus::Syncing { fetched: 0 },
             error: None,
             reading: None,
+            compose: None,
+            notice: None,
             worker,
             gmail,
         };
@@ -117,6 +124,7 @@ impl Session {
     }
 
     pub fn select(&mut self, mailbox: &str) {
+        self.notice = None;
         if self.mailbox != mailbox {
             self.mailbox = mailbox.to_string();
             self.rows.clear();
@@ -179,6 +187,7 @@ impl Session {
 
     /// Opens a message: shown at once from the store, marked read locally straight away.
     pub fn open_message(&mut self, gmail_id: &str) -> Opened {
+        self.notice = None;
         let Ok(Some(id)) = self.store.find(self.account, gmail_id) else { return Opened::default() };
         let Ok(Some(message)) = self.store.message(id) else { return Opened::default() };
         let mark_read = message.summary.unread && self.store.set_unread(self.account, gmail_id, false).unwrap_or(false);

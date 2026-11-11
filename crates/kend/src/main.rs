@@ -1,6 +1,7 @@
 //! kend: a fast local email client.
 
 mod app;
+mod compose;
 mod dates;
 mod html;
 mod icons;

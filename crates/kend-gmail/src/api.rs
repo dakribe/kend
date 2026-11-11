@@ -223,6 +223,23 @@ impl Gmail {
         }
     }
 
+    /// Sends a message. Returns its Gmail id. Sending costs 100 quota units.
+    pub fn send(&self, message: &crate::Outgoing) -> Result<String> {
+        #[derive(Deserialize)]
+        struct Sent {
+            id: String,
+        }
+        Ok(self.post::<Sent>("/messages/send", &message.request(), 100)?.id)
+    }
+
+    /// The `Message-ID` and `References` headers a reply to `id` needs, so it threads in
+    /// other mail apps too.
+    pub fn reply_headers(&self, id: &str) -> Result<(Option<String>, Option<String>)> {
+        let query = [("format", "metadata"), ("metadataHeaders", "Message-ID"), ("metadataHeaders", "References")];
+        let message: GmailMessage = self.get(&format!("/messages/{id}"), &query, 5)?;
+        Ok((message.header("Message-ID").map(str::to_string), message.header("References").map(str::to_string)))
+    }
+
     /// Adds and removes labels on a message (`UNREAD` to mark it unread or read).
     pub fn modify_labels(&self, id: &str, add: &[&str], remove: &[&str]) -> Result<()> {
         let body = serde_json::json!({ "addLabelIds": add, "removeLabelIds": remove });
