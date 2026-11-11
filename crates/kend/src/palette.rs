@@ -295,6 +295,7 @@ pub fn palette_view(k: &Kit, app: &App, layer: &mut Vec<El>) {
             .items_center()
             .radius(k.radius.md)
             .hover(k.c.hover)
+            .press(k.c.pressed)
             .child(text(entry.label.clone()).font(k.ty.ui).color(k.c.text_base).grow(1.0).min_w(0.0).truncate());
         if !entry.keys.is_empty() {
             r = r.child(Keybind::new(entry.keys).build(k));

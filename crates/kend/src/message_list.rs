@@ -27,6 +27,10 @@ pub fn message_list(k: &Kit, dark: bool, session: &Session) -> El {
         return col().key("messages").w_full().h_full().center().child(message(k, &note).key("empty"));
     }
     let kit = k.clone();
+    // An empty checkbox's outline is too faint on a row to find (1.2:1); this one reads at
+    // over 4:1.
+    let mut check_kit = k.clone();
+    check_kit.c.border_weak = k.c.text_faint;
     let now = Zoned::now();
     let rows = col()
         .key("message-rows")
@@ -45,7 +49,7 @@ pub fn message_list(k: &Kit, dark: bool, session: &Session) -> El {
                 let date = dates::label(m.received_at, &now);
                 // Rebuilt only when what the row shows changes.
                 memo(m.gmail_id.as_str(), (m, selected, checked, &date, dark), || {
-                    message_row(&kit, m, selected, checked, &date)
+                    message_row(&kit, &check_kit, m, selected, checked, &date)
                 })
             },
         )
@@ -59,20 +63,22 @@ pub fn message_list(k: &Kit, dark: bool, session: &Session) -> El {
 /// The row's star: filled when starred, a faint outline otherwise. Clicking it toggles just
 /// this message.
 fn star(k: &Kit, m: &MessageSummary) -> El {
-    let (glyph, color, help) = if m.starred {
-        (&glyphs::STAR_FILLED, k.c.warning.fg, "Unstar (S)")
+    let (glyph, color, verb) = if m.starred {
+        (&glyphs::STAR_FILLED, k.c.warning.fg, "Unstar")
     } else {
-        (&glyphs::STAR, k.c.text_faint, "Star (S)")
+        (&glyphs::STAR, k.c.text_faint, "Star")
     };
     let (id, starred) = (m.gmail_id.clone(), m.starred);
     row()
         .key("star")
         .role("button")
-        .label(help)
-        .size(24.0, 24.0)
+        .label(format!("{verb} message from {}", m.from.display()))
+        .help(format!("{verb}  S"))
+        .size(28.0, 28.0)
         .center()
         .radius(k.radius.sm)
         .hover(k.c.hover)
+        .press(k.c.pressed)
         .child(icon(glyph, 14.0).color(color))
         .on_press_tx(move |s: &mut App, tx: &mut rune::Tx| {
             tx.instant();
@@ -80,7 +86,7 @@ fn star(k: &Kit, m: &MessageSummary) -> El {
         })
 }
 
-fn message_row(k: &Kit, m: &MessageSummary, selected: bool, checked: bool, date: &str) -> El {
+fn message_row(k: &Kit, check_kit: &Kit, m: &MessageSummary, selected: bool, checked: bool, date: &str) -> El {
     let (weight, ink) = if m.unread { (k.ty.ui_medium, k.c.text_base) } else { (k.ty.ui, k.c.text_muted) };
     let mut dot = el().size(8.0, 8.0).radius(4.0);
     if m.unread {
@@ -101,23 +107,28 @@ fn message_row(k: &Kit, m: &MessageSummary, selected: bool, checked: bool, date:
         .w(64.0);
     let id = m.gmail_id.clone();
     let check_id = m.gmail_id.clone();
+    let toggle = move |s: &mut App, tx: &mut rune::Tx| {
+        tx.instant();
+        s.click_checkbox(&check_id, tx.mods());
+    };
     let checkbox = Checkbox::new(checked)
-        .label("Select")
+        .label(format!("Select message from {}: {subject}", m.from.display()))
         .hide_label()
-        .on_toggle_tx(move |s: &mut App, tx: &mut rune::Tx| {
-            tx.instant();
-            s.click_checkbox(&check_id, tx.mods());
-        })
-        .build(k)
+        .on_toggle_tx(toggle.clone())
+        .build(check_kit)
         .key("check");
+    // The box is 16 points; the strip around it, the row's full height, checks it too.
+    let checkbox = row().key("check-hit").w(40.0).h(ROW_HEIGHT).center().on_press_tx(toggle).child(checkbox);
     let mut r = row()
         .w_full()
         .h(ROW_HEIGHT)
-        .px(16.0)
+        .pl(4.0)
+        .pr(16.0)
         .gap(12.0)
         .items_center()
         .radius(k.radius.md)
         .hover(k.c.hover)
+        .press(k.c.pressed)
         .on_press_tx(move |s: &mut App, tx: &mut rune::Tx| {
             tx.instant();
             s.click_row(&id, tx.mods());
