@@ -27,10 +27,7 @@ fn main() {
     for key in KEYS {
         println!("cargo::rerun-if-env-changed={key}");
         let value = std::env::var(key).ok().or_else(|| from_file.remove(key));
-        if let Some(value) = value
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
-        {
+        if let Some(value) = value.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) {
             println!("cargo::rustc-env={key}={value}");
         }
     }

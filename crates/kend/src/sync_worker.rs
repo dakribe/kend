@@ -48,9 +48,7 @@ pub struct Spec {
 impl SyncWorker {
     pub fn start(spec: Spec) -> Self {
         let (commands, inbox) = channel();
-        let spawned = thread::Builder::new()
-            .name("sync".into())
-            .spawn(move || run(spec, inbox));
+        let spawned = thread::Builder::new().name("sync".into()).spawn(move || run(spec, inbox));
         if let Err(err) = spawned {
             // Without a thread there is no sync; say so instead of spinning forever.
             let _ = commands.send(Command::Stop);
@@ -72,20 +70,13 @@ impl Drop for SyncWorker {
 
 fn run(spec: Spec, commands: Receiver<Command>) {
     let send = |update: SyncUpdate| {
-        if spec
-            .events
-            .send(Event::Sync {
-                session: spec.session,
-                update,
-            })
-            .is_ok()
+        if spec.events.send(Event::Sync { session: spec.session, update }).is_ok()
             && let Some(wake) = &spec.waker
         {
             wake();
         }
     };
-    let opened = Store::open(&spec.db_path)
-        .and_then(|store| Ok((store.upsert_account(&spec.account.email)?, store)));
+    let opened = Store::open(&spec.db_path).and_then(|store| Ok((store.upsert_account(&spec.account.email)?, store)));
     let (account_id, mut store) = match opened {
         Ok(opened) => opened,
         Err(err) => return send(SyncUpdate::Finished(Err(err.to_string()))),
@@ -94,9 +85,7 @@ fn run(spec: Spec, commands: Receiver<Command>) {
     let options = Options::default();
 
     loop {
-        let result = kend_sync::sync(&gmail, &mut store, account_id, &options, &mut |n| {
-            send(SyncUpdate::Progress(n))
-        });
+        let result = kend_sync::sync(&gmail, &mut store, account_id, &options, &mut |n| send(SyncUpdate::Progress(n)));
         let wait = match result {
             Err(kend_sync::Error::Gmail(kend_gmail::Error::SignedOut)) => {
                 return send(SyncUpdate::SignedOut);
@@ -126,9 +115,7 @@ fn run(spec: Spec, commands: Receiver<Command>) {
 /// A failed sync, as the status line says it.
 fn describe(err: &kend_sync::Error) -> String {
     match err {
-        kend_sync::Error::Gmail(kend_gmail::Error::RateLimited) => {
-            "Gmail asked kend to slow down".into()
-        }
+        kend_sync::Error::Gmail(kend_gmail::Error::RateLimited) => "Gmail asked kend to slow down".into(),
         kend_sync::Error::Gmail(kend_gmail::Error::Network(_)) => "can't reach Gmail".into(),
         err => err.to_string(),
     }

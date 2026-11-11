@@ -19,8 +19,7 @@ impl Store {
 
     /// Removes the account and, by cascade, all of its mail.
     pub fn delete_account(&self, account: AccountId) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM accounts WHERE id = ?1", [account.0])?;
+        self.conn.execute("DELETE FROM accounts WHERE id = ?1", [account.0])?;
         Ok(())
     }
 
@@ -29,10 +28,7 @@ impl Store {
     pub fn clear_messages(&mut self, account: AccountId) -> Result<()> {
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM messages WHERE account_id = ?1", [account.0])?;
-        tx.execute(
-            "UPDATE accounts SET history_id = NULL, full_sync_start = NULL WHERE id = ?1",
-            [account.0],
-        )?;
+        tx.execute("UPDATE accounts SET history_id = NULL, full_sync_start = NULL WHERE id = ?1", [account.0])?;
         tx.commit()?;
         Ok(())
     }
@@ -41,20 +37,13 @@ impl Store {
     pub fn history_id(&self, account: AccountId) -> Result<Option<String>> {
         Ok(self
             .conn
-            .query_row(
-                "SELECT history_id FROM accounts WHERE id = ?1",
-                [account.0],
-                |r| r.get(0),
-            )
+            .query_row("SELECT history_id FROM accounts WHERE id = ?1", [account.0], |r| r.get(0))
             .optional()?
             .flatten())
     }
 
     pub fn set_history_id(&self, account: AccountId, history_id: &str) -> Result<()> {
-        self.conn.execute(
-            "UPDATE accounts SET history_id = ?2 WHERE id = ?1",
-            params![account.0, history_id],
-        )?;
+        self.conn.execute("UPDATE accounts SET history_id = ?2 WHERE id = ?1", params![account.0, history_id])?;
         Ok(())
     }
 
@@ -62,21 +51,14 @@ impl Store {
     pub fn full_sync_start(&self, account: AccountId) -> Result<Option<String>> {
         Ok(self
             .conn
-            .query_row(
-                "SELECT full_sync_start FROM accounts WHERE id = ?1",
-                [account.0],
-                |r| r.get(0),
-            )
+            .query_row("SELECT full_sync_start FROM accounts WHERE id = ?1", [account.0], |r| r.get(0))
             .optional()?
             .flatten())
     }
 
     /// Records that a full sync began at `history_id`.
     pub fn begin_full_sync(&self, account: AccountId, history_id: &str) -> Result<()> {
-        self.conn.execute(
-            "UPDATE accounts SET full_sync_start = ?2 WHERE id = ?1",
-            params![account.0, history_id],
-        )?;
+        self.conn.execute("UPDATE accounts SET full_sync_start = ?2 WHERE id = ?1", params![account.0, history_id])?;
         Ok(())
     }
 
@@ -95,9 +77,7 @@ impl Store {
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM labels WHERE account_id = ?1", [account.0])?;
         {
-            let mut insert = tx.prepare(
-                "INSERT INTO labels (account_id, id, name, kind) VALUES (?1, ?2, ?3, ?4)",
-            )?;
+            let mut insert = tx.prepare("INSERT INTO labels (account_id, id, name, kind) VALUES (?1, ?2, ?3, ?4)")?;
             for label in labels {
                 let kind = match label.kind {
                     LabelKind::System => "system",
@@ -121,11 +101,7 @@ impl Store {
             Ok(Label {
                 id: r.get(0)?,
                 name: r.get(1)?,
-                kind: if kind == "system" {
-                    LabelKind::System
-                } else {
-                    LabelKind::User
-                },
+                kind: if kind == "system" { LabelKind::System } else { LabelKind::User },
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -169,14 +145,8 @@ mod tests {
     fn labels_are_replaced_and_sorted() {
         let mut store = Store::open_in_memory().unwrap();
         let a = store.upsert_account("me@example.com").unwrap();
-        let label = |id: &str, name: &str, kind| Label {
-            id: id.into(),
-            name: name.into(),
-            kind,
-        };
-        store
-            .replace_labels(a, &[label("x", "old", LabelKind::User)])
-            .unwrap();
+        let label = |id: &str, name: &str, kind| Label { id: id.into(), name: name.into(), kind };
+        store.replace_labels(a, &[label("x", "old", LabelKind::User)]).unwrap();
         store
             .replace_labels(
                 a,
@@ -188,12 +158,7 @@ mod tests {
                 ],
             )
             .unwrap();
-        let names: Vec<_> = store
-            .labels(a)
-            .unwrap()
-            .into_iter()
-            .map(|l| l.name)
-            .collect();
+        let names: Vec<_> = store.labels(a).unwrap().into_iter().map(|l| l.name).collect();
         assert_eq!(names, ["INBOX", "SENT", "Family", "receipts"]);
     }
 }

@@ -26,12 +26,7 @@ pub enum SyncStatus {
 
 impl Session {
     /// Reads whatever mail is already stored, so a returning user sees their inbox at once.
-    pub fn open(
-        id: u64,
-        store: Store,
-        email: &str,
-        worker: Option<SyncWorker>,
-    ) -> kend_store::Result<Self> {
+    pub fn open(id: u64, store: Store, email: &str, worker: Option<SyncWorker>) -> kend_store::Result<Self> {
         let account = store.upsert_account(email)?;
         let mut session = Self {
             id,

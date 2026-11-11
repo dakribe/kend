@@ -16,10 +16,7 @@ impl Pkce {
 
     fn from_verifier(verifier: String) -> Self {
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-        Self {
-            verifier,
-            challenge,
-        }
+        Self { verifier, challenge }
     }
 }
 
@@ -37,20 +34,14 @@ mod tests {
     #[test]
     fn challenge_matches_the_rfc_7636_example() {
         let pkce = Pkce::from_verifier("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk".into());
-        assert_eq!(
-            pkce.challenge,
-            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
-        );
+        assert_eq!(pkce.challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
     }
 
     #[test]
     fn tokens_are_43_url_safe_characters_and_unique() {
         let (a, b) = (random_token(), random_token());
         assert_eq!(a.len(), 43);
-        assert!(
-            a.chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        );
+        assert!(a.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
         assert_ne!(a, b);
     }
 }

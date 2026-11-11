@@ -42,11 +42,7 @@ impl MailSource for Gmail {
         Ok(Gmail::labels(self)?
             .into_iter()
             .map(|l| Label {
-                kind: if l.kind == "user" {
-                    LabelKind::User
-                } else {
-                    LabelKind::System
-                },
+                kind: if l.kind == "user" { LabelKind::User } else { LabelKind::System },
                 id: l.id,
                 name: l.name,
             })
@@ -60,10 +56,7 @@ impl MailSource for Gmail {
         max: usize,
     ) -> kend_gmail::Result<(Vec<String>, Option<String>)> {
         let page = self.list_messages(label, page_token, max.min(500) as u32)?;
-        Ok((
-            page.messages.into_iter().map(|m| m.id).collect(),
-            page.next_page_token,
-        ))
+        Ok((page.messages.into_iter().map(|m| m.id).collect(), page.next_page_token))
     }
 
     fn message(&self, id: &str) -> kend_gmail::Result<Option<NewMessage>> {
@@ -73,18 +66,8 @@ impl MailSource for Gmail {
     fn history(&self, start: &str, page_token: Option<&str>) -> kend_gmail::Result<ChangePage> {
         let page = Gmail::history(self, start, page_token)?;
         Ok(ChangePage {
-            changed: page
-                .history
-                .iter()
-                .flat_map(|r| r.changed())
-                .map(str::to_string)
-                .collect(),
-            deleted: page
-                .history
-                .iter()
-                .flat_map(|r| r.deleted())
-                .map(str::to_string)
-                .collect(),
+            changed: page.history.iter().flat_map(|r| r.changed()).map(str::to_string).collect(),
+            deleted: page.history.iter().flat_map(|r| r.deleted()).map(str::to_string).collect(),
             history_id: page.history_id,
             next_page_token: page.next_page_token,
         })

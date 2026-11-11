@@ -16,9 +16,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
-pub use model::{
-    AccountId, Address, Cursor, Label, LabelKind, Message, MessageId, MessageSummary, NewMessage,
-};
+pub use model::{AccountId, Address, Cursor, Label, LabelKind, Message, MessageId, MessageSummary, NewMessage};
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -41,10 +39,7 @@ pub struct Store {
 impl Store {
     /// `~/Library/Application Support/kend/mail.sqlite` on macOS.
     pub fn default_path() -> Result<PathBuf> {
-        Ok(dirs::data_dir()
-            .ok_or(Error::NoDataDir)?
-            .join("kend")
-            .join("mail.sqlite"))
+        Ok(dirs::data_dir().ok_or(Error::NoDataDir)?.join("kend").join("mail.sqlite"))
     }
 
     /// Opens (or creates) the database at `path` and brings its schema up to date.

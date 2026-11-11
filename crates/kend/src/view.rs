@@ -12,21 +12,10 @@ type Scene = (&'static str, fn(&mut App));
 pub const SCENES: &[Scene] = &[
     ("not-configured", |s| s.auth = Auth::NotConfigured),
     ("signed-out", |s| s.auth = Auth::SignedOut { error: None }),
-    ("sign-in-failed", |s| {
-        s.auth = Auth::SignedOut {
-            error: Some("sign-in timed out".into()),
-        }
-    }),
-    ("signing-in", |s| {
-        s.auth = Auth::SigningIn {
-            attempt: 1,
-            cancel: CancelToken::default(),
-        }
-    }),
+    ("sign-in-failed", |s| s.auth = Auth::SignedOut { error: Some("sign-in timed out".into()) }),
+    ("signing-in", |s| s.auth = Auth::SigningIn { attempt: 1, cancel: CancelToken::default() }),
     ("inbox", |s| s.auth = sample_inbox(SyncStatus::Synced)),
-    ("syncing", |s| {
-        s.auth = sample_inbox(SyncStatus::Syncing { fetched: 200 })
-    }),
+    ("syncing", |s| s.auth = sample_inbox(SyncStatus::Syncing { fetched: 200 })),
 ];
 
 pub fn view(s: &App, cx: &mut Cx<App>) -> El {
@@ -39,12 +28,7 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
             "Add your Google client ID and secret to .env (see .env.example), then rebuild.",
         ),
         Auth::SignedOut { error } => {
-            let mut p = panel(
-                &k,
-                "Welcome to kend",
-                "Sign in with your Google account to load your mail.",
-            )
-            .child(
+            let mut p = panel(&k, "Welcome to kend", "Sign in with your Google account to load your mail.").child(
                 Button::new("Sign in with Google")
                     .variant(ButtonVariant::Contrast)
                     .on_press(|s: &mut App| s.start_sign_in())
@@ -56,45 +40,29 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
             }
             p
         }
-        Auth::SigningIn { .. } => panel(
-            &k,
-            "Finish signing in in your browser",
-            "kend will continue once you allow access.",
-        )
-        .child(Spinner::new().build(&k))
-        .child(
-            Button::new("Cancel")
-                .variant(ButtonVariant::Ghost)
-                .on_press(|s: &mut App| s.cancel_sign_in())
-                .build(&k)
-                .key("cancel"),
-        ),
-        Auth::SignedIn {
-            account,
-            session: Some(session),
-        } => return inbox(&k, account, session),
+        Auth::SigningIn { .. } => {
+            panel(&k, "Finish signing in in your browser", "kend will continue once you allow access.")
+                .child(Spinner::new().build(&k))
+                .child(
+                    Button::new("Cancel")
+                        .variant(ButtonVariant::Ghost)
+                        .on_press(|s: &mut App| s.cancel_sign_in())
+                        .build(&k)
+                        .key("cancel"),
+                )
+        }
+        Auth::SignedIn { account, session: Some(session) } => return inbox(&k, account, session),
     };
-    col()
-        .w_full()
-        .h_full()
-        .center()
-        .fill(k.c.bg_base)
-        .child(content)
+    col().w_full().h_full().center().fill(k.c.bg_base).child(content)
 }
 
 fn inbox(k: &Kit, account: &Account, session: &Session) -> El {
     let title = text("Inbox").font(k.ty.ui_medium).color(k.c.text_base);
-    let unread = text(counts(session.total, session.unread))
-        .key("unread")
-        .font(k.ty.ui)
-        .color(k.c.text_muted);
-    let status = text(sync_status(&session.sync))
-        .key("sync-status")
-        .font(k.ty.ui)
-        .color(match session.sync {
-            SyncStatus::Failed(_) => k.c.danger.fg,
-            _ => k.c.text_faint,
-        });
+    let unread = text(counts(session.total, session.unread)).key("unread").font(k.ty.ui).color(k.c.text_muted);
+    let status = text(sync_status(&session.sync)).key("sync-status").font(k.ty.ui).color(match session.sync {
+        SyncStatus::Failed(_) => k.c.danger.fg,
+        _ => k.c.text_faint,
+    });
     let header = row()
         .w_full()
         .h(52.0)
@@ -128,78 +96,26 @@ fn inbox(k: &Kit, account: &Account, session: &Session) -> El {
         } else {
             "Your inbox is empty."
         };
-        col()
-            .w_full()
-            .grow(1.0)
-            .center()
-            .child(message(k, note).key("empty"))
+        col().w_full().grow(1.0).center().child(message(k, note).key("empty"))
     } else {
-        let rows = col()
-            .w_full()
-            .children(session.rows.iter().map(|m| message_row(k, m)));
-        col()
-            .key("messages")
-            .w_full()
-            .grow(1.0)
-            .min_h(0.0)
-            .scroll(ScrollSpec {
-                stick_bottom: false,
-            })
-            .child(rows)
+        let rows = col().w_full().children(session.rows.iter().map(|m| message_row(k, m)));
+        col().key("messages").w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(rows)
     };
-    col()
-        .w_full()
-        .h_full()
-        .fill(k.c.bg_base)
-        .child(header)
-        .child(divider)
-        .child(body)
+    col().w_full().h_full().fill(k.c.bg_base).child(header).child(divider).child(body)
 }
 
 fn message_row(k: &Kit, m: &MessageSummary) -> El {
-    let (weight, ink) = if m.unread {
-        (k.ty.ui_medium, k.c.text_base)
-    } else {
-        (k.ty.ui, k.c.text_muted)
-    };
-    let dot = el().size(8.0, 8.0).radius(4.0).fill(if m.unread {
-        k.c.text_accent
-    } else {
-        k.c.bg_base
-    });
-    let from = text(m.from.display())
-        .font(weight)
-        .color(ink)
-        .truncate()
-        .w(200.0);
-    let subject = if m.subject.is_empty() {
-        "(no subject)"
-    } else {
-        &m.subject
-    };
+    let (weight, ink) = if m.unread { (k.ty.ui_medium, k.c.text_base) } else { (k.ty.ui, k.c.text_muted) };
+    let dot = el().size(8.0, 8.0).radius(4.0).fill(if m.unread { k.c.text_accent } else { k.c.bg_base });
+    let from = text(m.from.display()).font(weight).color(ink).truncate().w(200.0);
+    let subject = if m.subject.is_empty() { "(no subject)" } else { &m.subject };
     let line = row()
         .grow(1.0)
         .min_w(0.0)
         .gap(8.0)
         .child(text(subject).font(weight).color(ink).truncate().shrink())
-        .child(
-            text(&m.snippet)
-                .font(k.ty.ui)
-                .color(k.c.text_faint)
-                .truncate()
-                .grow(1.0)
-                .min_w(0.0),
-        );
-    row()
-        .key(m.gmail_id.clone())
-        .w_full()
-        .h(40.0)
-        .px(20.0)
-        .gap(12.0)
-        .items_center()
-        .child(dot)
-        .child(from)
-        .child(line)
+        .child(text(&m.snippet).font(k.ty.ui).color(k.c.text_faint).truncate().grow(1.0).min_w(0.0));
+    row().key(m.gmail_id.clone()).w_full().h(40.0).px(20.0).gap(12.0).items_center().child(dot).child(from).child(line)
 }
 
 fn sync_status(status: &SyncStatus) -> String {
@@ -233,25 +149,12 @@ fn thousands(n: u64) -> String {
 }
 
 fn panel(k: &Kit, title: &str, body: &str) -> El {
-    let title = text(title)
-        .key("title")
-        .font(k.ty.ui_medium)
-        .color(k.c.text_base);
-    col()
-        .w(360.0)
-        .center()
-        .gap(12.0)
-        .child(title)
-        .child(message(k, body).key("body"))
+    let title = text(title).key("title").font(k.ty.ui_medium).color(k.c.text_base);
+    col().w(360.0).center().gap(12.0).child(title).child(message(k, body).key("body"))
 }
 
 fn message(k: &Kit, s: &str) -> El {
-    text(s)
-        .font(k.ty.ui)
-        .color(k.c.text_muted)
-        .wrap()
-        .align(Align::Center)
-        .w_full()
+    text(s).font(k.ty.ui).color(k.c.text_muted).wrap().align(Align::Center).w_full()
 }
 
 /// A signed-in session over an in-memory database with a few messages, for snapshots.
@@ -288,11 +191,7 @@ fn sample_inbox(sync: SyncStatus) -> Auth {
             subject: (*subject).into(),
             snippet: (*snippet).into(),
             received_at: 1_000 - i as i64,
-            label_ids: if *unread {
-                vec!["INBOX".into(), "UNREAD".into()]
-            } else {
-                vec!["INBOX".into()]
-            },
+            label_ids: if *unread { vec!["INBOX".into(), "UNREAD".into()] } else { vec!["INBOX".into()] },
             ..NewMessage::default()
         })
         .collect();
@@ -320,15 +219,7 @@ mod tests {
         let mut app = App::with_client(None);
         let (_, set) = SCENES.iter().find(|(name, _)| *name == scene).unwrap();
         set(&mut app);
-        let mut rt = Runtime::new(
-            app,
-            view,
-            (1100.0, 720.0),
-            Env {
-                system_dark: true,
-                scale: 2.0,
-            },
-        );
+        let mut rt = Runtime::new(app, view, (1100.0, 720.0), Env { system_dark: true, scale: 2.0 });
         rt.frame(0.0);
         rt
     }
@@ -354,10 +245,7 @@ mod tests {
     fn counts_read_naturally() {
         assert_eq!(counts(1, 0), "1 message");
         assert_eq!(counts(500, 213), "500 messages · 213 unread");
-        assert_eq!(
-            counts(1_234_567, 1_000),
-            "1,234,567 messages · 1,000 unread"
-        );
+        assert_eq!(counts(1_234_567, 1_000), "1,234,567 messages · 1,000 unread");
     }
 
     #[test]

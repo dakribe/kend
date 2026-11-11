@@ -27,10 +27,7 @@ pub(crate) fn load() -> Result<Option<Account>> {
 }
 
 pub(crate) fn save(account: &Account) -> Result<()> {
-    let stored = Stored {
-        email: account.email.clone(),
-        refresh_token: account.refresh_token.clone(),
-    };
+    let stored = Stored { email: account.email.clone(), refresh_token: account.refresh_token.clone() };
     entry()?.set_password(&serde_json::to_string(&stored)?)?;
     Ok(())
 }
@@ -44,10 +41,7 @@ pub(crate) fn delete() -> Result<()> {
 
 fn entry() -> Result<keyring_core::Entry> {
     static STORE: OnceLock<Result<(), String>> = OnceLock::new();
-    STORE
-        .get_or_init(set_store)
-        .clone()
-        .map_err(Error::Keychain)?;
+    STORE.get_or_init(set_store).clone().map_err(Error::Keychain)?;
     Ok(keyring_core::Entry::new(SERVICE, USER)?)
 }
 

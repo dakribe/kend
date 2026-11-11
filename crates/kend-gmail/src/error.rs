@@ -43,9 +43,6 @@ impl From<keyring_core::Error> for Error {
 impl Error {
     /// Worth trying again after a pause: rate limits, server errors and dropped connections.
     pub fn is_transient(&self) -> bool {
-        matches!(
-            self,
-            Error::RateLimited | Error::Server(_) | Error::Network(_)
-        )
+        matches!(self, Error::RateLimited | Error::Server(_) | Error::Network(_))
     }
 }

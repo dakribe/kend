@@ -2,9 +2,7 @@
 
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 
-use crate::{
-    AccountId, Address, Cursor, Message, MessageId, MessageSummary, NewMessage, Result, Store,
-};
+use crate::{AccountId, Address, Cursor, Message, MessageId, MessageSummary, NewMessage, Result, Store};
 
 /// The columns [`summary_from_row`] reads, in order, from `messages m`.
 pub(crate) const SUMMARY_COLUMNS: &str = "m.id, m.gmail_id, m.thread_id, m.from_name, m.from_email, m.subject, m.snippet, m.received_at, m.unread, m.starred";
@@ -14,10 +12,7 @@ pub(crate) fn summary_from_row(r: &Row<'_>) -> rusqlite::Result<MessageSummary> 
         id: MessageId(r.get(0)?),
         gmail_id: r.get(1)?,
         thread_id: r.get(2)?,
-        from: Address {
-            name: r.get(3)?,
-            email: r.get(4)?,
-        },
+        from: Address { name: r.get(3)?, email: r.get(4)? },
         subject: r.get(5)?,
         snippet: r.get(6)?,
         received_at: r.get(7)?,
@@ -28,11 +23,7 @@ pub(crate) fn summary_from_row(r: &Row<'_>) -> rusqlite::Result<MessageSummary> 
 
 impl Store {
     /// Adds or updates messages in one transaction. A `None` body keeps the stored one.
-    pub fn upsert_messages(
-        &mut self,
-        account: AccountId,
-        messages: &[NewMessage],
-    ) -> Result<Vec<MessageId>> {
+    pub fn upsert_messages(&mut self, account: AccountId, messages: &[NewMessage]) -> Result<Vec<MessageId>> {
         let tx = self.conn.transaction()?;
         let mut ids = Vec::with_capacity(messages.len());
         {
@@ -80,12 +71,7 @@ impl Store {
 
     /// Replaces one message's labels (a label change from sync, or marking read locally).
     /// Returns false when the message isn't stored.
-    pub fn set_labels(
-        &mut self,
-        account: AccountId,
-        gmail_id: &str,
-        label_ids: &[String],
-    ) -> Result<bool> {
+    pub fn set_labels(&mut self, account: AccountId, gmail_id: &str, label_ids: &[String]) -> Result<bool> {
         let tx = self.conn.transaction()?;
         let found: Option<(i64, i64)> = tx
             .query_row(
@@ -112,8 +98,7 @@ impl Store {
         let tx = self.conn.transaction()?;
         let mut deleted = 0;
         {
-            let mut delete =
-                tx.prepare_cached("DELETE FROM messages WHERE account_id = ?1 AND gmail_id = ?2")?;
+            let mut delete = tx.prepare_cached("DELETE FROM messages WHERE account_id = ?1 AND gmail_id = ?2")?;
             for gmail_id in gmail_ids {
                 deleted += delete.execute(params![account.0, gmail_id])?;
             }
@@ -140,18 +125,14 @@ impl Store {
         let rows = match after {
             None => {
                 let mut stmt = self.conn.prepare_cached(&format!("{base} {order}"))?;
-                stmt.query_map(params![account.0, label_id, limit], summary_from_row)?
-                    .collect::<Result<Vec<_>, _>>()?
+                stmt.query_map(params![account.0, label_id, limit], summary_from_row)?.collect::<Result<Vec<_>, _>>()?
             }
             Some(c) => {
-                let mut stmt = self.conn.prepare_cached(&format!(
-                    "{base} AND (ml.received_at, ml.message_id) < (?4, ?5) {order}"
-                ))?;
-                stmt.query_map(
-                    params![account.0, label_id, limit, c.received_at, c.id.0],
-                    summary_from_row,
-                )?
-                .collect::<Result<Vec<_>, _>>()?
+                let mut stmt = self
+                    .conn
+                    .prepare_cached(&format!("{base} AND (ml.received_at, ml.message_id) < (?4, ?5) {order}"))?;
+                stmt.query_map(params![account.0, label_id, limit, c.received_at, c.id.0], summary_from_row)?
+                    .collect::<Result<Vec<_>, _>>()?
             }
         };
         Ok(rows)
@@ -159,9 +140,7 @@ impl Store {
 
     /// Which of `gmail_ids` aren't stored yet, in the order given.
     pub fn missing(&self, account: AccountId, gmail_ids: &[String]) -> Result<Vec<String>> {
-        let mut stmt = self
-            .conn
-            .prepare_cached("SELECT 1 FROM messages WHERE account_id = ?1 AND gmail_id = ?2")?;
+        let mut stmt = self.conn.prepare_cached("SELECT 1 FROM messages WHERE account_id = ?1 AND gmail_id = ?2")?;
         let mut missing = Vec::new();
         for id in gmail_ids {
             if !stmt.exists(params![account.0, id])? {
@@ -199,9 +178,9 @@ impl Store {
 
     /// A whole message, with its body if it has been fetched.
     pub fn message(&self, id: MessageId) -> Result<Option<Message>> {
-        let mut stmt = self
-            .conn
-            .prepare_cached(&format!("SELECT {SUMMARY_COLUMNS}, m.to_addrs, m.body_text, m.body_html FROM messages m WHERE m.id = ?1"))?;
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT {SUMMARY_COLUMNS}, m.to_addrs, m.body_text, m.body_html FROM messages m WHERE m.id = ?1"
+        ))?;
         let Some(mut message) = stmt
             .query_row([id.0], |r| {
                 Ok(Message {
@@ -216,21 +195,16 @@ impl Store {
         else {
             return Ok(None);
         };
-        let mut labels = self.conn.prepare_cached(
-            "SELECT label_id FROM message_labels WHERE message_id = ?1 ORDER BY label_id",
-        )?;
-        message.label_ids = labels
-            .query_map([id.0], |r| r.get(0))?
-            .collect::<Result<_, _>>()?;
+        let mut labels =
+            self.conn.prepare_cached("SELECT label_id FROM message_labels WHERE message_id = ?1 ORDER BY label_id")?;
+        message.label_ids = labels.query_map([id.0], |r| r.get(0))?.collect::<Result<_, _>>()?;
         Ok(Some(message))
     }
 
     /// Stores a body fetched after the message itself.
     pub fn set_body(&self, id: MessageId, text: Option<&str>, html: Option<&str>) -> Result<()> {
-        self.conn.execute(
-            "UPDATE messages SET body_text = ?2, body_html = ?3 WHERE id = ?1",
-            params![id.0, text, html],
-        )?;
+        self.conn
+            .execute("UPDATE messages SET body_text = ?2, body_html = ?3 WHERE id = ?1", params![id.0, text, html])?;
         Ok(())
     }
 
@@ -251,8 +225,7 @@ fn write_labels(
     received_at: i64,
     label_ids: &[String],
 ) -> Result<()> {
-    tx.prepare_cached("DELETE FROM message_labels WHERE message_id = ?1")?
-        .execute([id.0])?;
+    tx.prepare_cached("DELETE FROM message_labels WHERE message_id = ?1")?.execute([id.0])?;
     let mut insert = tx.prepare_cached(
         "INSERT OR IGNORE INTO message_labels (account_id, label_id, received_at, message_id) VALUES (?1, ?2, ?3, ?4)",
     )?;

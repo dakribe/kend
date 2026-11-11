@@ -38,12 +38,7 @@ impl Loopback {
     }
 
     /// Waits for the redirect carrying `state`, until `timeout` or `cancel`.
-    pub fn wait_for_code(
-        &self,
-        state: &str,
-        timeout: Duration,
-        cancel: &CancelToken,
-    ) -> Result<String> {
+    pub fn wait_for_code(&self, state: &str, timeout: Duration, cancel: &CancelToken) -> Result<String> {
         let deadline = Instant::now() + timeout;
         loop {
             if cancel.is_cancelled() {
@@ -58,9 +53,7 @@ impl Loopback {
                     Ok(Callback::Declined(reason)) => return Err(Error::Declined(reason)),
                     Ok(Callback::Ignored) | Err(_) => {}
                 },
-                Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(50))
-                }
+                Err(err) if err.kind() == ErrorKind::WouldBlock => thread::sleep(Duration::from_millis(50)),
                 Err(err) => return Err(err.into()),
             }
         }
@@ -73,10 +66,7 @@ fn handle(mut stream: TcpStream, state: &str) -> std::io::Result<Callback> {
     let target = read_request_target(&mut stream)?;
     let callback = parse_callback(&target, state);
     let (status, message) = match &callback {
-        Callback::Code(_) => (
-            "200 OK",
-            "You're signed in to kend. You can close this tab.",
-        ),
+        Callback::Code(_) => ("200 OK", "You're signed in to kend. You can close this tab."),
         Callback::Declined(_) => ("200 OK", "Sign-in was cancelled. You can close this tab."),
         Callback::Ignored => ("404 Not Found", "Not found."),
     };
@@ -112,11 +102,7 @@ fn parse_callback(target: &str, expected_state: &str) -> Callback {
     let Ok(url) = Url::parse("http://127.0.0.1").and_then(|base| base.join(target)) else {
         return Callback::Ignored;
     };
-    let param = |name: &str| {
-        url.query_pairs()
-            .find(|(k, _)| k == name)
-            .map(|(_, v)| v.into_owned())
-    };
+    let param = |name: &str| url.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.into_owned());
     if param("state").as_deref() != Some(expected_state) {
         return Callback::Ignored;
     }
@@ -133,18 +119,12 @@ mod tests {
 
     #[test]
     fn a_matching_state_yields_the_code() {
-        assert_eq!(
-            parse_callback("/?state=abc&code=4%2F0Ab&scope=x", "abc"),
-            Callback::Code("4/0Ab".into())
-        );
+        assert_eq!(parse_callback("/?state=abc&code=4%2F0Ab&scope=x", "abc"), Callback::Code("4/0Ab".into()));
     }
 
     #[test]
     fn a_wrong_or_missing_state_is_ignored() {
-        assert_eq!(
-            parse_callback("/?state=evil&code=123", "abc"),
-            Callback::Ignored
-        );
+        assert_eq!(parse_callback("/?state=evil&code=123", "abc"), Callback::Ignored);
         assert_eq!(parse_callback("/?code=123", "abc"), Callback::Ignored);
         assert_eq!(parse_callback("/favicon.ico", "abc"), Callback::Ignored);
     }
@@ -173,9 +153,7 @@ mod tests {
             let signed_in = get("/?state=s1&code=c1");
             (favicon, signed_in)
         });
-        let code = loopback
-            .wait_for_code("s1", Duration::from_secs(5), &CancelToken::default())
-            .unwrap();
+        let code = loopback.wait_for_code("s1", Duration::from_secs(5), &CancelToken::default()).unwrap();
         let (favicon, signed_in) = browser.join().unwrap();
         assert_eq!(code, "c1");
         assert!(favicon.starts_with("HTTP/1.1 404"));

@@ -13,10 +13,7 @@ pub struct ClientCredentials {
 impl ClientCredentials {
     /// The client from `.env` or the build environment, or `None` when it wasn't set.
     pub fn built_in() -> Option<Self> {
-        match (
-            option_env!("KEND_GOOGLE_CLIENT_ID"),
-            option_env!("KEND_GOOGLE_CLIENT_SECRET"),
-        ) {
+        match (option_env!("KEND_GOOGLE_CLIENT_ID"), option_env!("KEND_GOOGLE_CLIENT_SECRET")) {
             (Some(id), Some(secret)) => Some(Self { id, secret }),
             _ => None,
         }
@@ -25,9 +22,6 @@ impl ClientCredentials {
 
 impl fmt::Debug for ClientCredentials {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ClientCredentials")
-            .field("id", &self.id)
-            .field("secret", &"<redacted>")
-            .finish()
+        f.debug_struct("ClientCredentials").field("id", &self.id).field("secret", &"<redacted>").finish()
     }
 }

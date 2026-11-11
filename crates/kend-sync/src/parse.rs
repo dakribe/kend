@@ -8,10 +8,7 @@ pub(crate) fn parse_address(header: &str) -> Address {
     let header = header.trim();
     match (header.rfind('<'), header.ends_with('>')) {
         (Some(open), true) => {
-            let name = header[..open]
-                .trim()
-                .trim_matches('"')
-                .replace("\\\"", "\"");
+            let name = header[..open].trim().trim_matches('"').replace("\\\"", "\"");
             Address::new(name, header[open + 1..header.len() - 1].trim())
         }
         _ => Address::new("", header),
@@ -25,10 +22,7 @@ pub(crate) fn decode_entities(s: &str) -> String {
     while let Some(amp) = rest.find('&') {
         out.push_str(&rest[..amp]);
         rest = &rest[amp..];
-        let decoded = rest
-            .find(';')
-            .filter(|&end| end <= 10)
-            .and_then(|end| Some((entity(&rest[1..end])?, end)));
+        let decoded = rest.find(';').filter(|&end| end <= 10).and_then(|end| Some((entity(&rest[1..end])?, end)));
         match decoded {
             Some((c, end)) => {
                 out.push(c);
@@ -68,14 +62,8 @@ mod tests {
 
     #[test]
     fn addresses_parse_in_every_common_form() {
-        assert_eq!(
-            parse_address("Ana Lima <ana@x.com>"),
-            Address::new("Ana Lima", "ana@x.com")
-        );
-        assert_eq!(
-            parse_address("\"Lima, Ana\" <ana@x.com>"),
-            Address::new("Lima, Ana", "ana@x.com")
-        );
+        assert_eq!(parse_address("Ana Lima <ana@x.com>"), Address::new("Ana Lima", "ana@x.com"));
+        assert_eq!(parse_address("\"Lima, Ana\" <ana@x.com>"), Address::new("Lima, Ana", "ana@x.com"));
         assert_eq!(parse_address("<ana@x.com>"), Address::new("", "ana@x.com"));
         assert_eq!(parse_address(" ana@x.com "), Address::new("", "ana@x.com"));
         assert_eq!(parse_address(""), Address::new("", ""));
@@ -83,14 +71,8 @@ mod tests {
 
     #[test]
     fn snippet_entities_decode() {
-        assert_eq!(
-            decode_entities("It&#39;s Tom &amp; Jerry &lt;3"),
-            "It's Tom & Jerry <3"
-        );
+        assert_eq!(decode_entities("It&#39;s Tom &amp; Jerry &lt;3"), "It's Tom & Jerry <3");
         assert_eq!(decode_entities("&#x1F600; &quot;hi&quot;"), "😀 \"hi\"");
-        assert_eq!(
-            decode_entities("AT&T & co; &bogus; &"),
-            "AT&T & co; &bogus; &"
-        );
+        assert_eq!(decode_entities("AT&T & co; &bogus; &"), "AT&T & co; &bogus; &");
     }
 }

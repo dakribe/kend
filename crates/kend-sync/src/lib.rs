@@ -37,11 +37,7 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Self {
-            inbox_limit: 500,
-            page_size: 100,
-            workers: 8,
-        }
+        Self { inbox_limit: 500, page_size: 100, workers: 8 }
     }
 }
 
@@ -87,10 +83,7 @@ fn full(
     if store.full_sync_start(account)?.is_none() {
         store.begin_full_sync(account, &source.history_id()?)?;
     }
-    let mut report = Report {
-        full: true,
-        ..Report::default()
-    };
+    let mut report = Report { full: true, ..Report::default() };
     let mut listed = 0;
     let mut page_token = None;
     while listed < options.inbox_limit {

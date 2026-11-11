@@ -43,14 +43,8 @@ pub enum Auth {
 
 pub enum Event {
     Loaded(Result<Option<Account>, Error>),
-    SignInFinished {
-        attempt: u64,
-        result: Result<Account, Error>,
-    },
-    Sync {
-        session: u64,
-        update: SyncUpdate,
-    },
+    SignInFinished { attempt: u64, result: Result<Account, Error> },
+    Sync { session: u64, update: SyncUpdate },
 }
 
 impl App {
@@ -60,19 +54,8 @@ impl App {
 
     pub fn with_client(client: Option<ClientCredentials>) -> Self {
         let (sender, events) = channel();
-        let auth = if client.is_some() {
-            Auth::Loading
-        } else {
-            Auth::NotConfigured
-        };
-        Self {
-            auth,
-            client,
-            sender,
-            events,
-            waker: None,
-            next_attempt: 0,
-        }
+        let auth = if client.is_some() { Auth::Loading } else { Auth::NotConfigured };
+        Self { auth, client, sender, events, waker: None, next_attempt: 0 }
     }
 
     /// Runs once at launch with the waker background threads use to wake `poll`.
@@ -99,46 +82,23 @@ impl App {
     /// Applies one event. Answers the current state didn't ask for change nothing.
     pub fn apply(&mut self, event: Event) -> bool {
         let next = match (&mut self.auth, event) {
-            (Auth::Loading, Event::Loaded(Ok(Some(account)))) => Auth::SignedIn {
-                account,
-                session: None,
-            },
+            (Auth::Loading, Event::Loaded(Ok(Some(account)))) => Auth::SignedIn { account, session: None },
             (Auth::Loading, Event::Loaded(Ok(None))) => Auth::SignedOut { error: None },
-            (Auth::Loading, Event::Loaded(Err(err))) => Auth::SignedOut {
-                error: Some(err.to_string()),
-            },
-            (
-                Auth::SigningIn { attempt, .. },
-                Event::SignInFinished {
-                    attempt: done,
-                    result,
-                },
-            ) if *attempt == done => match result {
-                Ok(account) => Auth::SignedIn {
-                    account,
-                    session: None,
-                },
-                Err(Error::Cancelled) => Auth::SignedOut { error: None },
-                Err(err) => Auth::SignedOut {
-                    error: Some(err.to_string()),
-                },
-            },
-            (
-                Auth::SignedIn {
-                    session: Some(session),
-                    ..
-                },
-                Event::Sync {
-                    session: id,
-                    update,
-                },
-            ) if session.id == id => {
+            (Auth::Loading, Event::Loaded(Err(err))) => Auth::SignedOut { error: Some(err.to_string()) },
+            (Auth::SigningIn { attempt, .. }, Event::SignInFinished { attempt: done, result }) if *attempt == done => {
+                match result {
+                    Ok(account) => Auth::SignedIn { account, session: None },
+                    Err(Error::Cancelled) => Auth::SignedOut { error: None },
+                    Err(err) => Auth::SignedOut { error: Some(err.to_string()) },
+                }
+            }
+            (Auth::SignedIn { session: Some(session), .. }, Event::Sync { session: id, update })
+                if session.id == id =>
+            {
                 if !session.apply(update) {
                     return true;
                 }
-                Auth::SignedOut {
-                    error: Some(Error::SignedOut.to_string()),
-                }
+                Auth::SignedOut { error: Some(Error::SignedOut.to_string()) }
             }
             _ => return false,
         };
@@ -151,11 +111,7 @@ impl App {
         let Some(client) = self.client else {
             return false;
         };
-        let Auth::SignedIn {
-            account,
-            session: session @ None,
-        } = &mut self.auth
-        else {
+        let Auth::SignedIn { account, session: session @ None } = &mut self.auth else {
             return false;
         };
         self.next_attempt += 1;
@@ -173,11 +129,7 @@ impl App {
         });
         match opened {
             Ok(opened) => *session = Some(Box::new(opened)),
-            Err(err) => {
-                self.auth = Auth::SignedOut {
-                    error: Some(format!("Couldn't open the mail database: {err}")),
-                }
-            }
+            Err(err) => self.auth = Auth::SignedOut { error: Some(format!("Couldn't open the mail database: {err}")) },
         }
         true
     }
@@ -190,14 +142,8 @@ impl App {
         self.next_attempt += 1;
         let attempt = self.next_attempt;
         let cancel = CancelToken::default();
-        self.auth = Auth::SigningIn {
-            attempt,
-            cancel: cancel.clone(),
-        };
-        self.spawn("sign-in", move || Event::SignInFinished {
-            attempt,
-            result: kend_gmail::sign_in(&client, &cancel),
-        });
+        self.auth = Auth::SigningIn { attempt, cancel: cancel.clone() };
+        self.spawn("sign-in", move || Event::SignInFinished { attempt, result: kend_gmail::sign_in(&client, &cancel) });
     }
 
     pub fn cancel_sign_in(&mut self) {
@@ -208,11 +154,7 @@ impl App {
     }
 
     pub fn sync_now(&mut self) {
-        if let Auth::SignedIn {
-            session: Some(session),
-            ..
-        } = &mut self.auth
-        {
+        if let Auth::SignedIn { session: Some(session), .. } = &mut self.auth {
             session.sync_now();
         }
     }
@@ -220,17 +162,14 @@ impl App {
     /// Stops sync, then (off the UI thread) deletes the account's local mail and revokes its
     /// token. The database and Keychain keep nothing of the account.
     pub fn sign_out(&mut self) {
-        let Auth::SignedIn { account, session } =
-            std::mem::replace(&mut self.auth, Auth::SignedOut { error: None })
+        let Auth::SignedIn { account, session } = std::mem::replace(&mut self.auth, Auth::SignedOut { error: None })
         else {
             return;
         };
         drop(session);
         let forget = move || {
             if let Ok(store) = Store::default_path().and_then(|path| Store::open(&path)) {
-                let _ = store
-                    .upsert_account(&account.email)
-                    .and_then(|id| store.delete_account(id));
+                let _ = store.upsert_account(&account.email).and_then(|id| store.delete_account(id));
             }
             // Revoking is best effort: the account is already gone locally.
             let _ = kend_gmail::sign_out(&account);
@@ -266,12 +205,8 @@ mod tests {
     }
 
     fn signed_in(app: &mut App, id: u64) {
-        let session =
-            Session::open(id, Store::open_in_memory().unwrap(), "me@example.com", None).unwrap();
-        app.auth = Auth::SignedIn {
-            account: account(),
-            session: Some(Box::new(session)),
-        };
+        let session = Session::open(id, Store::open_in_memory().unwrap(), "me@example.com", None).unwrap();
+        app.auth = Auth::SignedIn { account: account(), session: Some(Box::new(session)) };
     }
 
     #[test]
@@ -279,9 +214,7 @@ mod tests {
         let mut app = App::with_client(None);
         app.auth = Auth::Loading;
         assert!(app.apply(Event::Loaded(Ok(Some(account())))));
-        assert!(
-            matches!(&app.auth, Auth::SignedIn { account, .. } if account.email == "me@example.com")
-        );
+        assert!(matches!(&app.auth, Auth::SignedIn { account, .. } if account.email == "me@example.com"));
 
         app.auth = Auth::Loading;
         app.apply(Event::Loaded(Ok(None)));
@@ -291,17 +224,11 @@ mod tests {
     #[test]
     fn an_answer_from_a_cancelled_sign_in_changes_nothing() {
         let mut app = App::with_client(None);
-        app.auth = Auth::SigningIn {
-            attempt: 1,
-            cancel: CancelToken::default(),
-        };
+        app.auth = Auth::SigningIn { attempt: 1, cancel: CancelToken::default() };
         app.cancel_sign_in();
         assert!(matches!(app.auth, Auth::SignedOut { error: None }));
 
-        let late = Event::SignInFinished {
-            attempt: 1,
-            result: Ok(account()),
-        };
+        let late = Event::SignInFinished { attempt: 1, result: Ok(account()) };
         assert!(!app.apply(late));
         assert!(matches!(app.auth, Auth::SignedOut { .. }));
     }
@@ -309,18 +236,9 @@ mod tests {
     #[test]
     fn only_the_current_attempt_finishes_sign_in() {
         let mut app = App::with_client(None);
-        app.auth = Auth::SigningIn {
-            attempt: 2,
-            cancel: CancelToken::default(),
-        };
-        assert!(!app.apply(Event::SignInFinished {
-            attempt: 1,
-            result: Ok(account())
-        }));
-        assert!(app.apply(Event::SignInFinished {
-            attempt: 2,
-            result: Err(Error::TimedOut)
-        }));
+        app.auth = Auth::SigningIn { attempt: 2, cancel: CancelToken::default() };
+        assert!(!app.apply(Event::SignInFinished { attempt: 1, result: Ok(account()) }));
+        assert!(app.apply(Event::SignInFinished { attempt: 2, result: Err(Error::TimedOut) }));
         assert!(matches!(&app.auth, Auth::SignedOut { error: Some(e) } if e.contains("timed out")));
     }
 
@@ -328,13 +246,7 @@ mod tests {
     fn sync_progress_reloads_the_inbox_from_the_store() {
         let mut app = App::with_client(None);
         signed_in(&mut app, 7);
-        let Auth::SignedIn {
-            session: Some(session),
-            ..
-        } = &mut app.auth
-        else {
-            unreachable!()
-        };
+        let Auth::SignedIn { session: Some(session), .. } = &mut app.auth else { unreachable!() };
         let account = session.account();
         let message = NewMessage {
             gmail_id: "m1".into(),
@@ -342,22 +254,10 @@ mod tests {
             label_ids: vec!["INBOX".into(), "UNREAD".into()],
             ..NewMessage::default()
         };
-        session
-            .store_mut()
-            .upsert_messages(account, &[message])
-            .unwrap();
+        session.store_mut().upsert_messages(account, &[message]).unwrap();
 
-        assert!(app.apply(Event::Sync {
-            session: 7,
-            update: SyncUpdate::Progress(1)
-        }));
-        let Auth::SignedIn {
-            session: Some(session),
-            ..
-        } = &app.auth
-        else {
-            unreachable!()
-        };
+        assert!(app.apply(Event::Sync { session: 7, update: SyncUpdate::Progress(1) }));
+        let Auth::SignedIn { session: Some(session), .. } = &app.auth else { unreachable!() };
         assert_eq!((session.rows.len(), session.unread), (1, 1));
         assert!(matches!(session.sync, SyncStatus::Syncing { fetched: 1 }));
     }
@@ -366,10 +266,7 @@ mod tests {
     fn a_stopped_workers_updates_are_ignored() {
         let mut app = App::with_client(None);
         signed_in(&mut app, 7);
-        assert!(!app.apply(Event::Sync {
-            session: 6,
-            update: SyncUpdate::SignedOut
-        }));
+        assert!(!app.apply(Event::Sync { session: 6, update: SyncUpdate::SignedOut }));
         assert!(matches!(app.auth, Auth::SignedIn { .. }));
     }
 
@@ -377,12 +274,7 @@ mod tests {
     fn a_revoked_sign_in_returns_to_the_sign_in_screen() {
         let mut app = App::with_client(None);
         signed_in(&mut app, 7);
-        assert!(app.apply(Event::Sync {
-            session: 7,
-            update: SyncUpdate::SignedOut
-        }));
-        assert!(
-            matches!(&app.auth, Auth::SignedOut { error: Some(e) } if e.contains("sign in again"))
-        );
+        assert!(app.apply(Event::Sync { session: 7, update: SyncUpdate::SignedOut }));
+        assert!(matches!(&app.auth, Auth::SignedOut { error: Some(e) } if e.contains("sign in again")));
     }
 }

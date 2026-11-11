@@ -25,19 +25,13 @@ pub struct Account {
 
 impl Account {
     pub fn new(email: String, refresh_token: String) -> Self {
-        Self {
-            email,
-            refresh_token,
-        }
+        Self { email, refresh_token }
     }
 }
 
 impl fmt::Debug for Account {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Account")
-            .field("email", &self.email)
-            .field("refresh_token", &"<redacted>")
-            .finish()
+        f.debug_struct("Account").field("email", &self.email).field("refresh_token", &"<redacted>").finish()
     }
 }
 
@@ -63,9 +57,7 @@ impl AccessToken {
 
 impl fmt::Debug for AccessToken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AccessToken")
-            .field("expires_at", &self.expires_at)
-            .finish_non_exhaustive()
+        f.debug_struct("AccessToken").field("expires_at", &self.expires_at).finish_non_exhaustive()
     }
 }
 
@@ -104,10 +96,8 @@ pub fn sign_in(client: &ClientCredentials, cancel: &CancelToken) -> Result<Accou
     if !tokens.grants(GMAIL_SCOPE) {
         return Err(Error::MissingScope);
     }
-    let refresh_token = tokens
-        .refresh_token
-        .clone()
-        .ok_or_else(|| Error::Google("no refresh token was issued".into()))?;
+    let refresh_token =
+        tokens.refresh_token.clone().ok_or_else(|| Error::Google("no refresh token was issued".into()))?;
     let email = profile_email(&AccessToken::from_response(&tokens))?;
 
     let account = Account::new(email, refresh_token);
@@ -117,10 +107,7 @@ pub fn sign_in(client: &ClientCredentials, cancel: &CancelToken) -> Result<Accou
 
 /// A fresh access token for `account`. [`Error::SignedOut`] means Google revoked the sign-in.
 pub fn access_token(client: &ClientCredentials, account: &Account) -> Result<AccessToken> {
-    Ok(AccessToken::from_response(&oauth::refresh(
-        client,
-        &account.refresh_token,
-    )?))
+    Ok(AccessToken::from_response(&oauth::refresh(client, &account.refresh_token)?))
 }
 
 /// Forgets the account locally, then asks Google to revoke its token. The local sign-out

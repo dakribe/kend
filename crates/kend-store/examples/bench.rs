@@ -8,16 +8,12 @@ use std::time::Instant;
 use kend_store::{Address, NewMessage, Store};
 
 const WORDS: &[&str] = &[
-    "invoice", "meeting", "travel", "report", "launch", "dinner", "contract", "update", "review",
-    "photos", "budget", "flight", "hiring", "design", "release", "notes", "agenda", "receipt",
-    "offer", "welcome",
+    "invoice", "meeting", "travel", "report", "launch", "dinner", "contract", "update", "review", "photos", "budget",
+    "flight", "hiring", "design", "release", "notes", "agenda", "receipt", "offer", "welcome",
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let total: usize = std::env::args()
-        .nth(1)
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(100_000);
+    let total: usize = std::env::args().nth(1).and_then(|n| n.parse().ok()).unwrap_or(100_000);
     let dir = std::env::temp_dir().join(format!("kend-bench-{}", std::process::id()));
     let mut store = Store::open(&dir.join("mail.sqlite"))?;
     let account = store.upsert_account("me@example.com")?;
@@ -32,23 +28,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             NewMessage {
                 gmail_id: format!("{i:016x}"),
                 thread_id: format!("{:016x}", i / 3),
-                from: Address::new(
-                    format!("Sender {}", i % 500),
-                    format!("sender{}@example.com", i % 500),
-                ),
+                from: Address::new(format!("Sender {}", i % 500), format!("sender{}@example.com", i % 500)),
                 to: "me@example.com".into(),
                 subject: format!("{} {} #{i}", word(0), word(1)),
                 snippet: format!("{} {} {}", word(2), word(3), word(4)),
                 received_at: 1_700_000_000_000 + i as i64 * 60_000,
                 label_ids: labels,
-                body_text: Some(format!(
-                    "{} {} {} {} {}",
-                    word(5),
-                    word(6),
-                    word(7),
-                    word(8),
-                    word(9)
-                )),
+                body_text: Some(format!("{} {} {} {} {}", word(5), word(6), word(7), word(8), word(9))),
                 body_html: None,
             }
         })
@@ -70,56 +56,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for _ in 0..runs {
             f();
         }
-        println!(
-            "{label}: {:.3} ms",
-            start.elapsed().as_secs_f64() * 1000.0 / runs as f64
-        );
+        println!("{label}: {:.3} ms", start.elapsed().as_secs_f64() * 1000.0 / runs as f64);
     };
 
     time("first inbox page (50 rows)", 200, &mut || {
-        store
-            .list(account, "INBOX", None, 50)
-            .map(|_| ())
-            .unwrap_or_default();
+        store.list(account, "INBOX", None, 50).map(|_| ()).unwrap_or_default();
     });
     // Walk to a page deep in the mailbox, then time fetching the page after it.
     let mut after = None;
     for _ in 0..(total / 50 / 2) {
-        after = store
-            .list(account, "INBOX", after, 50)?
-            .last()
-            .map(|m| m.cursor());
+        after = store.list(account, "INBOX", after, 50)?.last().map(|m| m.cursor());
     }
     time("a page halfway down", 200, &mut || {
-        store
-            .list(account, "INBOX", after, 50)
-            .map(|_| ())
-            .unwrap_or_default();
+        store.list(account, "INBOX", after, 50).map(|_| ()).unwrap_or_default();
     });
     time("unread count", 20, &mut || {
-        store
-            .unread_count(account, "INBOX")
-            .map(|_| ())
-            .unwrap_or_default();
+        store.unread_count(account, "INBOX").map(|_| ()).unwrap_or_default();
     });
     time("search \"invoice meeting\" (top 50)", 50, &mut || {
-        store
-            .search(account, "invoice meeting", 50)
-            .map(|_| ())
-            .unwrap_or_default();
+        store.search(account, "invoice meeting", 50).map(|_| ()).unwrap_or_default();
     });
     time("search prefix \"recei\" (top 50)", 50, &mut || {
-        store
-            .search(account, "recei", 50)
-            .map(|_| ())
-            .unwrap_or_default();
+        store.search(account, "recei", 50).map(|_| ()).unwrap_or_default();
     });
     // Closer to real mail: a word that appears in a handful of messages.
     time("search a rare word (\"4321\")", 200, &mut || {
-        store
-            .search(account, "4321", 50)
-            .map(|_| ())
-            .unwrap_or_default();
+        store.search(account, "4321", 50).map(|_| ()).unwrap_or_default();
     });
 
     drop(store);

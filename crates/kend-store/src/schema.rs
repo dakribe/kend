@@ -111,9 +111,7 @@ mod tests {
         let mut conn = Connection::open_in_memory().unwrap();
         migrate(&mut conn).unwrap();
         migrate(&mut conn).unwrap();
-        let version: i64 = conn
-            .query_row("PRAGMA user_version", [], |r| r.get(0))
-            .unwrap();
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
         assert_eq!(version, MIGRATIONS.len() as i64);
     }
 
@@ -121,9 +119,6 @@ mod tests {
     fn a_newer_database_is_refused() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.pragma_update(None, "user_version", 999).unwrap();
-        assert!(matches!(
-            migrate(&mut conn),
-            Err(Error::TooNew { found: 999, .. })
-        ));
+        assert!(matches!(migrate(&mut conn), Err(Error::TooNew { found: 999, .. })));
     }
 }

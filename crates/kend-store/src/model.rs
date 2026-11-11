@@ -13,19 +13,12 @@ pub struct Address {
 
 impl Address {
     pub fn new(name: impl Into<String>, email: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            email: email.into(),
-        }
+        Self { name: name.into(), email: email.into() }
     }
 
     /// The name when there is one, else the address.
     pub fn display(&self) -> &str {
-        if self.name.is_empty() {
-            &self.email
-        } else {
-            &self.name
-        }
+        if self.name.is_empty() { &self.email } else { &self.name }
     }
 }
 
@@ -80,10 +73,7 @@ pub struct MessageSummary {
 impl MessageSummary {
     /// Where the page after this row starts.
     pub fn cursor(&self) -> Cursor {
-        Cursor {
-            received_at: self.received_at,
-            id: self.id,
-        }
+        Cursor { received_at: self.received_at, id: self.id }
     }
 }
 

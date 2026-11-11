@@ -10,12 +10,7 @@ use crate::{AccountId, MessageSummary, Result, Store};
 impl Store {
     /// Messages matching every word of `query`, best match first: subject and sender
     /// count more than body text (see the `rank` weights in the schema).
-    pub fn search(
-        &self,
-        account: AccountId,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<MessageSummary>> {
+    pub fn search(&self, account: AccountId, query: &str, limit: usize) -> Result<Vec<MessageSummary>> {
         let Some(fts_query) = fts_query(query) else {
             return Ok(Vec::new());
         };
@@ -28,10 +23,7 @@ impl Store {
              ) f JOIN messages m ON m.id = f.rowid
              ORDER BY f.rank, m.received_at DESC"
         ))?;
-        let rows = stmt.query_map(
-            params![fts_query, account.0, limit as i64],
-            summary_from_row,
-        )?;
+        let rows = stmt.query_map(params![fts_query, account.0, limit as i64], summary_from_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 }
@@ -53,14 +45,8 @@ mod tests {
 
     #[test]
     fn words_are_quoted_and_prefix_matched() {
-        assert_eq!(
-            fts_query("ana invoice").as_deref(),
-            Some("\"ana\"* \"invoice\"*")
-        );
-        assert_eq!(
-            fts_query(r#"say "hi" OR -no"#).as_deref(),
-            Some("\"say\"* \"hi\"* \"OR\"* \"-no\"*")
-        );
+        assert_eq!(fts_query("ana invoice").as_deref(), Some("\"ana\"* \"invoice\"*"));
+        assert_eq!(fts_query(r#"say "hi" OR -no"#).as_deref(), Some("\"say\"* \"hi\"* \"OR\"* \"-no\"*"));
         assert_eq!(fts_query("  \"\" "), None);
     }
 }

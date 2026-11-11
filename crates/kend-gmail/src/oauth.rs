@@ -28,12 +28,7 @@ impl TokenResponse {
     }
 }
 
-pub(crate) fn auth_url(
-    client: &ClientCredentials,
-    redirect_uri: &str,
-    challenge: &str,
-    state: &str,
-) -> Url {
+pub(crate) fn auth_url(client: &ClientCredentials, redirect_uri: &str, challenge: &str, state: &str) -> Url {
     let params = [
         ("client_id", client.id),
         ("redirect_uri", redirect_uri),
@@ -87,10 +82,7 @@ mod tests {
 
     #[test]
     fn the_consent_url_asks_for_a_pkce_protected_offline_code() {
-        let client = ClientCredentials {
-            id: "id-123",
-            secret: "never-in-url",
-        };
+        let client = ClientCredentials { id: "id-123", secret: "never-in-url" };
         let url = auth_url(&client, "http://127.0.0.1:5000", "chal", "st");
         let q: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(q["client_id"], "id-123");

@@ -31,11 +31,7 @@ fn a_mailbox_lists_newest_first_with_flags() {
     store
         .upsert_messages(
             a,
-            &[
-                msg("old", 1, &["INBOX"]),
-                msg("new", 3, &["INBOX", "UNREAD", "STARRED"]),
-                msg("sent", 2, &["SENT"]),
-            ],
+            &[msg("old", 1, &["INBOX"]), msg("new", 3, &["INBOX", "UNREAD", "STARRED"]), msg("sent", 2, &["SENT"])],
         )
         .unwrap();
     let inbox = store.list(a, "INBOX", None, 10).unwrap();
@@ -49,9 +45,7 @@ fn a_mailbox_lists_newest_first_with_flags() {
 #[test]
 fn missing_lists_ids_not_yet_stored() {
     let (mut store, a) = store();
-    store
-        .upsert_messages(a, &[msg("have", 1, &["INBOX"])])
-        .unwrap();
+    store.upsert_messages(a, &[msg("have", 1, &["INBOX"])]).unwrap();
     let ids = ["new1".to_string(), "have".to_string(), "new2".to_string()];
     assert_eq!(store.missing(a, &ids).unwrap(), ["new1", "new2"]);
 }
@@ -60,9 +54,7 @@ fn missing_lists_ids_not_yet_stored() {
 fn pages_continue_from_the_cursor_without_gaps_or_repeats() {
     let (mut store, a) = store();
     // Several messages share a timestamp, so the cursor must break ties on id.
-    let all: Vec<_> = (0..25)
-        .map(|i| msg(&format!("m{i:02}"), i / 3, &["INBOX"]))
-        .collect();
+    let all: Vec<_> = (0..25).map(|i| msg(&format!("m{i:02}"), i / 3, &["INBOX"])).collect();
     store.upsert_messages(a, &all).unwrap();
 
     let mut seen = Vec::new();
@@ -85,9 +77,7 @@ fn upserting_again_updates_in_place_and_keeps_the_body() {
     let (mut store, a) = store();
     let mut first = msg("m1", 1, &["INBOX", "UNREAD"]);
     first.body_text = Some("hello there".into());
-    let [id] = store.upsert_messages(a, &[first]).unwrap()[..] else {
-        panic!()
-    };
+    let [id] = store.upsert_messages(a, &[first]).unwrap()[..] else { panic!() };
 
     let again = msg("m1", 1, &["INBOX"]); // read now; sync sent no body this time
     assert_eq!(store.upsert_messages(a, &[again]).unwrap(), [id]);
@@ -101,9 +91,7 @@ fn upserting_again_updates_in_place_and_keeps_the_body() {
 #[test]
 fn set_labels_moves_a_message_between_mailboxes() {
     let (mut store, a) = store();
-    store
-        .upsert_messages(a, &[msg("m1", 1, &["INBOX", "UNREAD"])])
-        .unwrap();
+    store.upsert_messages(a, &[msg("m1", 1, &["INBOX", "UNREAD"])]).unwrap();
     assert!(store.set_labels(a, "m1", &["Label_9".into()]).unwrap());
     assert!(store.list(a, "INBOX", None, 10).unwrap().is_empty());
     let archived = store.list(a, "Label_9", None, 10).unwrap();
@@ -115,15 +103,8 @@ fn set_labels_moves_a_message_between_mailboxes() {
 #[test]
 fn deleting_removes_the_message_from_lists_and_search() {
     let (mut store, a) = store();
-    store
-        .upsert_messages(a, &[msg("m1", 1, &["INBOX"]), msg("m2", 2, &["INBOX"])])
-        .unwrap();
-    assert_eq!(
-        store
-            .delete_messages(a, &["m1".into(), "nope".into()])
-            .unwrap(),
-        1
-    );
+    store.upsert_messages(a, &[msg("m1", 1, &["INBOX"]), msg("m2", 2, &["INBOX"])]).unwrap();
+    assert_eq!(store.delete_messages(a, &["m1".into(), "nope".into()]).unwrap(), 1);
     assert_eq!(ids(&store.list(a, "INBOX", None, 10).unwrap()), ["m2"]);
     assert_eq!(ids(&store.search(a, "m1", 10).unwrap()), Vec::<&str>::new());
 }
@@ -132,12 +113,8 @@ fn deleting_removes_the_message_from_lists_and_search() {
 fn accounts_never_see_each_others_mail() {
     let (mut store, a) = store();
     let b = store.upsert_account("other@example.com").unwrap();
-    store
-        .upsert_messages(a, &[msg("m1", 1, &["INBOX"])])
-        .unwrap();
-    store
-        .upsert_messages(b, &[msg("m1", 1, &["INBOX"])])
-        .unwrap();
+    store.upsert_messages(a, &[msg("m1", 1, &["INBOX"])]).unwrap();
+    store.upsert_messages(b, &[msg("m1", 1, &["INBOX"])]).unwrap();
     assert_eq!(store.search(a, "subject", 10).unwrap().len(), 1);
     store.delete_account(b).unwrap();
     assert!(store.search(b, "subject", 10).unwrap().is_empty());
@@ -154,34 +131,18 @@ fn search_matches_words_and_prefixes_ranking_subjects_first() {
     in_subject.subject = "Invoice for October".into();
     let mut other = msg("other", 9, &["INBOX"]);
     other.from = Address::new("Bo", "bo@example.com");
-    store
-        .upsert_messages(a, &[in_body, in_subject, other])
-        .unwrap();
+    store.upsert_messages(a, &[in_body, in_subject, other]).unwrap();
 
-    assert_eq!(
-        ids(&store.search(a, "invoice", 10).unwrap()),
-        ["subject", "body"]
-    );
-    assert_eq!(
-        ids(&store.search(a, "invo", 10).unwrap()),
-        ["subject", "body"]
-    );
-    assert_eq!(
-        ids(&store.search(a, "invoice october", 10).unwrap()),
-        ["subject"]
-    );
+    assert_eq!(ids(&store.search(a, "invoice", 10).unwrap()), ["subject", "body"]);
+    assert_eq!(ids(&store.search(a, "invo", 10).unwrap()), ["subject", "body"]);
+    assert_eq!(ids(&store.search(a, "invoice october", 10).unwrap()), ["subject"]);
     assert_eq!(ids(&store.search(a, "bo@example", 10).unwrap()), ["other"]);
 }
 
 #[test]
 fn a_body_fetched_later_becomes_searchable() {
     let (mut store, a) = store();
-    let [id] = store
-        .upsert_messages(a, &[msg("m1", 1, &["INBOX"])])
-        .unwrap()[..]
-    else {
-        panic!()
-    };
+    let [id] = store.upsert_messages(a, &[msg("m1", 1, &["INBOX"])]).unwrap()[..] else { panic!() };
     assert!(store.search(a, "quarterly", 10).unwrap().is_empty());
     store.set_body(id, Some("quarterly report"), None).unwrap();
     assert_eq!(ids(&store.search(a, "quarterly", 10).unwrap()), ["m1"]);
@@ -190,21 +151,14 @@ fn a_body_fetched_later_becomes_searchable() {
 #[test]
 fn opens_are_counted() {
     let (mut store, a) = store();
-    let [id] = store
-        .upsert_messages(a, &[msg("m1", 1, &["INBOX"])])
-        .unwrap()[..]
-    else {
-        panic!()
-    };
+    let [id] = store.upsert_messages(a, &[msg("m1", 1, &["INBOX"])]).unwrap()[..] else { panic!() };
     store.mark_opened(id, 1_000).unwrap();
     store.mark_opened(id, 2_000).unwrap();
     let (count, last): (i64, i64) = store
         .conn
-        .query_row(
-            "SELECT open_count, last_opened_at FROM messages WHERE id = ?1",
-            [id.0],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
+        .query_row("SELECT open_count, last_opened_at FROM messages WHERE id = ?1", [id.0], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
         .unwrap();
     assert_eq!((count, last), (2, 2_000));
 }
@@ -227,8 +181,5 @@ fn mailbox_pages_read_from_the_covering_index() {
         .collect();
     let plan = plan.join("\n");
     assert!(plan.contains("SEARCH ml USING PRIMARY KEY"), "{plan}");
-    assert!(
-        !plan.contains("TEMP B-TREE"),
-        "no sort step expected:\n{plan}"
-    );
+    assert!(!plan.contains("TEMP B-TREE"), "no sort step expected:\n{plan}");
 }

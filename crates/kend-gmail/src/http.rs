@@ -12,11 +12,7 @@ use crate::{Error, Result};
 pub(crate) fn agent() -> &'static Agent {
     static AGENT: OnceLock<Agent> = OnceLock::new();
     AGENT.get_or_init(|| {
-        Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(30)))
-            .http_status_as_error(false)
-            .build()
-            .into()
+        Agent::config_builder().timeout_global(Some(Duration::from_secs(30))).http_status_as_error(false).build().into()
     })
 }
 
@@ -64,10 +60,8 @@ mod tests {
 
     #[test]
     fn an_invalid_grant_means_signed_out() {
-        let err = google_error(
-            400,
-            r#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#,
-        );
+        let err =
+            google_error(400, r#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#);
         assert!(matches!(err, Error::SignedOut));
     }
 
@@ -85,21 +79,10 @@ mod tests {
 
     #[test]
     fn oauth_and_api_errors_keep_their_message() {
-        let oauth = google_error(
-            401,
-            r#"{"error":"invalid_client","error_description":"The OAuth client was not found."}"#,
-        );
-        assert_eq!(
-            oauth.to_string(),
-            "Google returned an error: 401: The OAuth client was not found."
-        );
-        let api = google_error(
-            403,
-            r#"{"error":{"code":403,"message":"Gmail API has not been used"}}"#,
-        );
-        assert_eq!(
-            api.to_string(),
-            "Google returned an error: 403: Gmail API has not been used"
-        );
+        let oauth =
+            google_error(401, r#"{"error":"invalid_client","error_description":"The OAuth client was not found."}"#);
+        assert_eq!(oauth.to_string(), "Google returned an error: 401: The OAuth client was not found.");
+        let api = google_error(403, r#"{"error":{"code":403,"message":"Gmail API has not been used"}}"#);
+        assert_eq!(api.to_string(), "Google returned an error: 403: Gmail API has not been used");
     }
 }

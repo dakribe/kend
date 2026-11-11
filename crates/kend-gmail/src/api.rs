@@ -34,19 +34,13 @@ struct Pacer {
 
 impl Pacer {
     fn new(units_per_second: u32) -> Self {
-        Self {
-            next: Mutex::new(Instant::now()),
-            per_unit: Duration::from_secs(1) / units_per_second,
-        }
+        Self { next: Mutex::new(Instant::now()), per_unit: Duration::from_secs(1) / units_per_second }
     }
 
     fn wait(&self, units: u32) {
         let now = Instant::now();
         let slot = {
-            let mut next = self
-                .next
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut next = self.next.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             let slot = (*next).max(now);
             *next = slot + self.per_unit * units;
             slot
@@ -56,10 +50,7 @@ impl Pacer {
 
     /// Holds every thread back for `pause`: when Gmail says slow down, it means all of us.
     fn cool_down(&self, pause: Duration) {
-        let mut next = self
-            .next
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut next = self.next.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         *next = (*next).max(Instant::now() + pause);
     }
 }
@@ -121,11 +112,7 @@ struct Header {
 impl GmailMessage {
     /// A header's value, matched case-insensitively.
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.payload
-            .headers
-            .iter()
-            .find(|h| h.name.eq_ignore_ascii_case(name))
-            .map(|h| h.value.as_str())
+        self.payload.headers.iter().find(|h| h.name.eq_ignore_ascii_case(name)).map(|h| h.value.as_str())
     }
 }
 
@@ -159,11 +146,7 @@ pub struct HistoryMessage {
 impl HistoryRecord {
     /// Messages whose labels or existence changed in this record.
     pub fn changed(&self) -> impl Iterator<Item = &str> {
-        self.messages_added
-            .iter()
-            .chain(&self.labels_added)
-            .chain(&self.labels_removed)
-            .map(|m| m.message.id.as_str())
+        self.messages_added.iter().chain(&self.labels_added).chain(&self.labels_removed).map(|m| m.message.id.as_str())
     }
 
     pub fn deleted(&self) -> impl Iterator<Item = &str> {
@@ -173,12 +156,7 @@ impl HistoryRecord {
 
 impl Gmail {
     pub fn new(client: ClientCredentials, account: Account) -> Self {
-        Self {
-            client,
-            account,
-            token: Mutex::new(None),
-            pacer: Pacer::new(UNITS_PER_SECOND),
-        }
+        Self { client, account, token: Mutex::new(None), pacer: Pacer::new(UNITS_PER_SECOND) }
     }
 
     pub fn account(&self) -> &Account {
@@ -205,12 +183,7 @@ impl Gmail {
     }
 
     /// One page of message ids in `label`, newest first.
-    pub fn list_messages(
-        &self,
-        label: &str,
-        page_token: Option<&str>,
-        max: u32,
-    ) -> Result<MessageList> {
+    pub fn list_messages(&self, label: &str, page_token: Option<&str>, max: u32) -> Result<MessageList> {
         let max = max.to_string();
         let mut query = vec![("labelIds", label), ("maxResults", max.as_str())];
         query.extend(page_token.map(|t| ("pageToken", t)));
@@ -241,12 +214,7 @@ impl Gmail {
     }
 
     /// GETs `path`, spending `units` of the quota (Gmail's published cost of the call).
-    fn get<T: DeserializeOwned>(
-        &self,
-        path: &str,
-        query: &[(&str, &str)],
-        units: u32,
-    ) -> Result<T> {
+    fn get<T: DeserializeOwned>(&self, path: &str, query: &[(&str, &str)], units: u32) -> Result<T> {
         let url = format!("{API}{path}");
         let mut refreshed = false;
         let mut attempt = 0;
@@ -266,12 +234,8 @@ impl Gmail {
                     self.forget_token();
                 }
                 // Pause every thread, not just this one; the pacer makes this request wait too.
-                Err(Error::RateLimited) if attempt < ATTEMPTS => {
-                    self.pacer.cool_down(backoff(attempt))
-                }
-                Err(err) if err.is_transient() && attempt < ATTEMPTS => {
-                    thread::sleep(backoff(attempt))
-                }
+                Err(Error::RateLimited) if attempt < ATTEMPTS => self.pacer.cool_down(backoff(attempt)),
+                Err(err) if err.is_transient() && attempt < ATTEMPTS => thread::sleep(backoff(attempt)),
                 Err(err) => return Err(err),
             }
         }
@@ -280,10 +244,7 @@ impl Gmail {
     /// The current access token, refreshed when it's missing or about to expire. Workers
     /// wait on the lock rather than all refreshing at once.
     fn bearer(&self) -> Result<String> {
-        let mut token = self
-            .token
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut token = self.token.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         match token.as_ref() {
             Some(t) if t.is_fresh() => Ok(t.token.clone()),
             _ => {
@@ -296,10 +257,7 @@ impl Gmail {
     }
 
     fn forget_token(&self) {
-        *self
-            .token
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        *self.token.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     }
 }
 
@@ -323,11 +281,7 @@ mod tests {
                 s.spawn(|| pacer.wait(5));
             }
         });
-        assert!(
-            start.elapsed() >= Duration::from_millis(45),
-            "{:?}",
-            start.elapsed()
-        );
+        assert!(start.elapsed() >= Duration::from_millis(45), "{:?}", start.elapsed());
     }
 
     #[test]
@@ -343,10 +297,7 @@ mod tests {
     fn backoff_doubles_with_jitter() {
         for (attempt, secs) in [(1, 1.0), (2, 2.0), (3, 4.0)] {
             let wait = backoff(attempt).as_secs_f64();
-            assert!(
-                wait >= secs && wait <= secs * 1.25,
-                "attempt {attempt}: {wait}"
-            );
+            assert!(wait >= secs && wait <= secs * 1.25, "attempt {attempt}: {wait}");
         }
     }
 

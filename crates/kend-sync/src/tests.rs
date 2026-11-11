@@ -33,10 +33,7 @@ fn message(id: &str, received_at: i64, labels: &[&str]) -> NewMessage {
 
 impl Fake {
     fn with_inbox(count: usize) -> Self {
-        let fake = Fake {
-            history_id: Mutex::new("100".into()),
-            ..Fake::default()
-        };
+        let fake = Fake { history_id: Mutex::new("100".into()), ..Fake::default() };
         for i in (0..count).rev() {
             fake.add(message(&format!("m{i:03}"), i as i64, &["INBOX"]));
         }
@@ -58,11 +55,7 @@ impl MailSource for Fake {
     }
 
     fn labels(&self) -> kend_gmail::Result<Vec<Label>> {
-        Ok(vec![Label {
-            id: "INBOX".into(),
-            name: "INBOX".into(),
-            kind: LabelKind::System,
-        }])
+        Ok(vec![Label { id: "INBOX".into(), name: "INBOX".into(), kind: LabelKind::System }])
     }
 
     fn list(
@@ -92,10 +85,7 @@ impl MailSource for Fake {
         }
         let mut changes = self.changes.lock().unwrap();
         if changes.is_empty() {
-            return Ok(ChangePage {
-                history_id: self.history_id()?,
-                ..ChangePage::default()
-            });
+            return Ok(ChangePage { history_id: self.history_id()?, ..ChangePage::default() });
         }
         let mut page = changes.remove(0);
         if !changes.is_empty() {
@@ -112,20 +102,11 @@ fn setup() -> (Store, AccountId) {
 }
 
 fn inbox_ids(store: &Store, account: AccountId) -> Vec<String> {
-    store
-        .list(account, "INBOX", None, 1000)
-        .unwrap()
-        .into_iter()
-        .map(|m| m.gmail_id)
-        .collect()
+    store.list(account, "INBOX", None, 1000).unwrap().into_iter().map(|m| m.gmail_id).collect()
 }
 
 fn small() -> Options {
-    Options {
-        inbox_limit: 25,
-        page_size: 10,
-        workers: 4,
-    }
+    Options { inbox_limit: 25, page_size: 10, workers: 4 }
 }
 
 #[test]
@@ -135,14 +116,7 @@ fn the_first_sync_fetches_the_newest_inbox_page_by_page() {
     let mut progress = Vec::new();
     let report = sync(&fake, &mut store, a, &small(), &mut |n| progress.push(n)).unwrap();
 
-    assert_eq!(
-        report,
-        Report {
-            full: true,
-            fetched: 25,
-            deleted: 0
-        }
-    );
+    assert_eq!(report, Report { full: true, fetched: 25, deleted: 0 });
     assert_eq!(progress, [10, 20, 25]);
     assert_eq!(store.full_sync_start(a).unwrap(), None);
     let ids = inbox_ids(&store, a);
@@ -169,20 +143,11 @@ fn later_syncs_apply_only_the_changes() {
 
     // A new message arrives, one is read, one is deleted.
     fake.add(message("new", 99, &["INBOX", "UNREAD"]));
-    fake.messages
-        .lock()
-        .unwrap()
-        .get_mut("m004")
-        .unwrap()
-        .label_ids = vec!["INBOX".into(), "STARRED".into()];
+    fake.messages.lock().unwrap().get_mut("m004").unwrap().label_ids = vec!["INBOX".into(), "STARRED".into()];
     fake.messages.lock().unwrap().remove("m000");
     *fake.history_id.lock().unwrap() = "200".into();
     *fake.changes.lock().unwrap() = vec![
-        ChangePage {
-            changed: vec!["new".into(), "m004".into()],
-            history_id: "150".into(),
-            ..ChangePage::default()
-        },
+        ChangePage { changed: vec!["new".into(), "m004".into()], history_id: "150".into(), ..ChangePage::default() },
         ChangePage {
             changed: vec!["new".into()],
             deleted: vec!["m000".into()],
@@ -192,23 +157,9 @@ fn later_syncs_apply_only_the_changes() {
     ];
 
     let report = sync(&fake, &mut store, a, &small(), &mut |_| {}).unwrap();
-    assert_eq!(
-        report,
-        Report {
-            full: false,
-            fetched: 2,
-            deleted: 1
-        }
-    );
-    assert_eq!(
-        fake.fetches.load(Ordering::Relaxed) - before,
-        2,
-        "only changed messages are fetched"
-    );
-    assert_eq!(
-        inbox_ids(&store, a),
-        ["new", "m004", "m003", "m002", "m001"]
-    );
+    assert_eq!(report, Report { full: false, fetched: 2, deleted: 1 });
+    assert_eq!(fake.fetches.load(Ordering::Relaxed) - before, 2, "only changed messages are fetched");
+    assert_eq!(inbox_ids(&store, a), ["new", "m004", "m003", "m002", "m001"]);
     assert!(store.list(a, "INBOX", None, 1).unwrap()[0].unread);
     assert!(store.list(a, "INBOX", None, 2).unwrap()[1].starred);
     assert_eq!(store.history_id(a).unwrap().as_deref(), Some("200"));
@@ -220,11 +171,8 @@ fn a_changed_message_that_is_gone_is_deleted() {
     let (mut store, a) = setup();
     sync(&fake, &mut store, a, &small(), &mut |_| {}).unwrap();
     fake.messages.lock().unwrap().remove("m001");
-    *fake.changes.lock().unwrap() = vec![ChangePage {
-        changed: vec!["m001".into()],
-        history_id: "101".into(),
-        ..ChangePage::default()
-    }];
+    *fake.changes.lock().unwrap() =
+        vec![ChangePage { changed: vec!["m001".into()], history_id: "101".into(), ..ChangePage::default() }];
 
     let report = sync(&fake, &mut store, a, &small(), &mut |_| {}).unwrap();
     assert_eq!(report.deleted, 1);
@@ -237,9 +185,7 @@ fn an_expired_history_starts_over_with_a_full_sync() {
     let (mut store, a) = setup();
     sync(&fake, &mut store, a, &small(), &mut |_| {}).unwrap();
     // Locally known mail that the server no longer has must not survive the resync.
-    store
-        .upsert_messages(a, &[message("stale", 50, &["INBOX"])])
-        .unwrap();
+    store.upsert_messages(a, &[message("stale", 50, &["INBOX"])]).unwrap();
 
     fake.history_expired = true;
     let report = sync(&fake, &mut store, a, &small(), &mut |_| {}).unwrap();
