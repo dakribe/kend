@@ -12,6 +12,7 @@ use rune_kit::PaneState;
 use rune_kit::shell;
 
 use crate::compose::{Compose, Field, SendState};
+use crate::palette::Palette;
 use crate::session::{Move, Moved, Session};
 use crate::sync_worker::{Spec, SyncUpdate, SyncWorker};
 
@@ -24,6 +25,8 @@ pub struct App {
     pub sidebar: PaneState,
     /// Whether the keyboard shortcuts dialog is open (?).
     pub help: bool,
+    /// The command palette (⌘K).
+    pub palette: Palette,
     client: Option<ClientCredentials>,
     sender: Sender<Event>,
     events: Receiver<Event>,
@@ -106,6 +109,7 @@ impl App {
             scratch: TextEdit::new(""),
             sidebar: PaneState::new(232.0).range(180.0, 360.0),
             help: false,
+            palette: Palette::default(),
             client,
             sender,
             events,
@@ -401,6 +405,12 @@ impl App {
         }
     }
 
+    pub fn check_all(&mut self) {
+        if let Some(session) = self.session_mut() {
+            session.check_all();
+        }
+    }
+
     pub fn toggle_help(&mut self) {
         self.help = !self.help;
     }
@@ -533,6 +543,19 @@ impl App {
         // Keys land at once: no glide when the list follows the selection.
         tx.instant();
         let plain = !(event.mods.cmd || event.mods.ctrl || event.mods.alt);
+        if event.is_command('k') {
+            if self.palette.open {
+                self.close_palette();
+            } else {
+                self.help = false;
+                self.open_palette(tx);
+            }
+            return true;
+        }
+        if self.palette.open {
+            // The palette's field handles its own keys.
+            return false;
+        }
         if self.help {
             // The shortcuts dialog is up: only the keys that close it do anything.
             let close = matches!(&event.key, Key::Escape) || matches!(&event.key, Key::Text(t) if t == "?");

@@ -34,9 +34,12 @@ everything you've already loaded works offline. The UI is native and GPU-rendere
 - **Select many at once** to archive or delete them together: X or the row's checkbox
   selects a message, Shift+J/K extends, ⌘A selects all, ⌘-click toggles and Shift-click selects
   a range. One Undo brings the whole batch back.
+- **Command palette** (⌘K): every action and mailbox, found by typing a few letters
+  ("gs" for Go to Sent). It lists only what applies right now, and recently used commands
+  come first.
 - **Compose, reply and forward**, with replies kept in their Gmail conversation.
 - **Keyboard first**: J/K or arrows to move, Return to open, Esc to go back, ⌘F or / to
-  search, E to archive, # to delete, Z to undo, R to reply, F to forward, ⌘N for a new message, ⌘Return to send, and ? to see every shortcut.
+  search, E to archive, # to delete, Z to undo, R to reply, F to forward, ⌘N for a new message, ⌘Return to send, ⌘K for the command palette, and ? to see every shortcut.
 - **Instant actions.** Nothing animates except loading indicators: opening a message, moving
   the selection, switching mailboxes and toggling the sidebar all land in the frame they
   happen, and a test checks it for each action.

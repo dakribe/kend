@@ -6,6 +6,7 @@ mod dates;
 mod html;
 mod icons;
 mod message_list;
+mod palette;
 mod reading;
 mod samples;
 mod session;

@@ -60,6 +60,10 @@ pub const SCENES: &[Scene] = &[
             session.check_range("sample-2");
         }
     }),
+    ("palette", |s| {
+        s.auth = sample_inbox(SyncStatus::Synced);
+        s.palette.open = true;
+    }),
     ("help", |s| {
         s.auth = sample_inbox(SyncStatus::Synced);
         s.help = true;
@@ -81,6 +85,7 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     let k = kit(cx.system_dark());
     let mut layer = Vec::new();
     shortcuts(&k, s.help, &mut layer);
+    crate::palette::palette_view(&k, s, &mut layer);
     instant_root(rune_kit::root(build(s, cx), layer))
 }
 
@@ -121,6 +126,7 @@ const SHORTCUTS: &[(&str, &[Shortcut])] = &[
             (&["F"], "Forward"),
             (&["⌘N"], "New message"),
             (&["⌘Return"], "Send"),
+            (&["⌘K"], "Command palette"),
             (&["?"], "Show these shortcuts"),
         ],
     ),
@@ -582,6 +588,11 @@ mod tests {
         lands_in_one_frame(&mut rt, "clearing the selection", |rt| click(rt, "clear-checked"));
         lands_in_one_frame(&mut rt, "opening help", |rt| key(rt, rune::Key::Text("?".into()), plain));
         lands_in_one_frame(&mut rt, "closing help", |rt| key(rt, rune::Key::Escape, plain));
+        let cmd = rune::Mods { cmd: true, ..rune::Mods::default() };
+        lands_in_one_frame(&mut rt, "opening the palette", |rt| key(rt, rune::Key::Command('k'), cmd));
+        lands_in_one_frame(&mut rt, "filtering the palette", |rt| key(rt, rune::Key::Text("s".into()), plain));
+        lands_in_one_frame(&mut rt, "moving in the palette", |rt| key(rt, rune::Key::Down, plain));
+        lands_in_one_frame(&mut rt, "closing the palette", |rt| key(rt, rune::Key::Escape, plain));
         lands_in_one_frame(&mut rt, "focusing search", |rt| click(rt, "search"));
         lands_in_one_frame(&mut rt, "typing a search", |rt| key(rt, rune::Key::Text("w".into()), plain));
         lands_in_one_frame(&mut rt, "clearing the search", |rt| key(rt, rune::Key::Escape, plain));
@@ -672,6 +683,52 @@ mod tests {
         key(&mut rt, rune::Key::Escape, rune::Mods::default());
         rt.frame(1.0 / 60.0);
         assert!(rt.find("help-dialog").is_none());
+    }
+
+    fn palette_open(rt: &Runtime<App>) -> bool {
+        rt.state.palette.open
+    }
+
+    #[test]
+    fn the_palette_finds_a_mailbox_and_goes_there() {
+        let mut rt = render("inbox");
+        key(&mut rt, rune::Key::Command('k'), rune::Mods { cmd: true, ..rune::Mods::default() });
+        rt.frame(1.0 / 60.0);
+        assert!(palette_open(&rt) && rt.find("palette-input").is_some());
+        type_text(&mut rt, "gosent");
+        let first = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("palette-0"));
+        assert!(first.is_some(), "a match is listed");
+        key(&mut rt, rune::Key::Enter, rune::Mods::default());
+        rt.frame(1.0 / 60.0);
+        assert!(!palette_open(&rt));
+        let Auth::SignedIn { session: Some(session), .. } = &rt.state.auth else { panic!() };
+        assert_eq!(session.mailbox, "SENT");
+    }
+
+    #[test]
+    fn palette_keys_dont_reach_the_list() {
+        let mut rt = render("inbox");
+        key(&mut rt, rune::Key::Command('k'), rune::Mods { cmd: true, ..rune::Mods::default() });
+        rt.frame(1.0 / 60.0);
+        type_text(&mut rt, "e");
+        let Auth::SignedIn { session: Some(session), .. } = &rt.state.auth else { panic!() };
+        assert_eq!(session.rows.len(), 3, "typing e in the palette doesn't archive");
+        assert_eq!(rt.state.palette.query.text, "e");
+        key(&mut rt, rune::Key::Escape, rune::Mods::default());
+        rt.frame(1.0 / 60.0);
+        assert!(!palette_open(&rt));
+    }
+
+    #[test]
+    fn clicking_a_palette_row_runs_it() {
+        let mut rt = render("inbox");
+        key(&mut rt, rune::Key::Command('k'), rune::Mods { cmd: true, ..rune::Mods::default() });
+        rt.frame(1.0 / 60.0);
+        type_text(&mut rt, "new mes");
+        click(&mut rt, "palette-0");
+        rt.frame(1.0 / 60.0);
+        let Auth::SignedIn { session: Some(session), .. } = &rt.state.auth else { panic!() };
+        assert!(session.compose.is_some());
     }
 
     #[test]

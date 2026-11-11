@@ -92,7 +92,7 @@ fn depth(name: &str) -> u8 {
     name.matches('/').count().min(4) as u8
 }
 
-fn leaf(name: &str) -> &str {
+pub fn leaf(name: &str) -> &str {
     name.rsplit('/').next().unwrap_or(name)
 }
 
