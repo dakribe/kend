@@ -150,6 +150,28 @@ impl Store {
         Ok(missing)
     }
 
+    /// The oldest receive time among `gmail_ids` that are stored.
+    pub fn oldest_among(&self, account: AccountId, gmail_ids: &[String]) -> Result<Option<i64>> {
+        let mut stmt =
+            self.conn.prepare_cached("SELECT received_at FROM messages WHERE account_id = ?1 AND gmail_id = ?2")?;
+        let mut oldest: Option<i64> = None;
+        for id in gmail_ids {
+            if let Some(at) = stmt.query_row(params![account.0, id], |r| r.get::<_, i64>(0)).optional()? {
+                oldest = Some(oldest.map_or(at, |o| o.min(at)));
+            }
+        }
+        Ok(oldest)
+    }
+
+    /// The oldest receive time in a mailbox.
+    pub fn oldest_in(&self, account: AccountId, label_id: &str) -> Result<Option<i64>> {
+        Ok(self.conn.query_row(
+            "SELECT min(received_at) FROM message_labels WHERE account_id = ?1 AND label_id = ?2",
+            params![account.0, label_id],
+            |r| r.get(0),
+        )?)
+    }
+
     /// Messages in a mailbox.
     pub fn count(&self, account: AccountId, label_id: &str) -> Result<u64> {
         let count: i64 = self.conn.query_row(

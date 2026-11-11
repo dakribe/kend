@@ -19,6 +19,12 @@ pub const SCENES: &[Scene] = &[
     ("signing-in", |s| s.auth = Auth::SigningIn { attempt: 1, cancel: CancelToken::default() }),
     ("inbox", |s| s.auth = sample_inbox(SyncStatus::Synced)),
     ("syncing", |s| s.auth = sample_inbox(SyncStatus::Syncing { fetched: 200 })),
+    ("sync-error", |s| {
+        s.auth = sample_inbox(SyncStatus::Synced);
+        if let Auth::SignedIn { session: Some(session), .. } = &mut s.auth {
+            session.error = Some("Gmail asked kend to slow down".into());
+        }
+    }),
     ("large", |s| s.auth = samples::large_inbox(5_000)),
 ];
 
@@ -83,7 +89,7 @@ fn mail(
         .trailing(
             Button::new("Sync now")
                 .variant(ButtonVariant::Ghost)
-                .help(sync_status(&session.sync))
+                .help(sync_status(session))
                 .on_press(|s: &mut App| s.sync_now())
                 .build(k)
                 .key("sync-now"),
@@ -96,7 +102,12 @@ fn mail(
                 .build(k)
                 .key("sign-out"),
         );
-    SplitView::new(message_list(k, dark, session))
+    let mut main = col().w_full().h_full().min_h(0.0);
+    if let Some(error) = &session.error {
+        main = main.child(sync_error(k, error));
+    }
+    let main = main.child(col().w_full().grow(1.0).min_h(0.0).child(message_list(k, dark, session)));
+    SplitView::new(main)
         .sidebar(&s.sidebar, |s: &mut App| &mut s.sidebar, sidebar(k, &account.email, session))
         .toolbar(toolbar)
         .titlebar_inset(titlebar_inset)
@@ -106,6 +117,33 @@ fn mail(
         .sidebar_toggle(SidebarToggle::new().size(ControlSize::Large).past_lights(16.0).edge(18.0).gap(4.0).in_header())
         .reduced_motion(reduced_motion)
         .build(k)
+}
+
+/// A failed sync, in full, until a sync succeeds. kend retries on its own; the button is for
+/// someone who fixed the cause (back online, say) and doesn't want to wait.
+fn sync_error(k: &Kit, error: &str) -> El {
+    let message = text(format!("Sync paused: {error}. kend will retry shortly."))
+        .key("sync-error")
+        .font(k.ty.ui)
+        .color(k.c.danger.fg)
+        .wrap()
+        .grow(1.0)
+        .min_w(0.0);
+    let retry = Button::new("Try again")
+        .variant(ButtonVariant::Ghost)
+        .on_press(|s: &mut App| s.sync_now())
+        .build(k)
+        .key("sync-retry");
+    row()
+        .w_full()
+        .px(16.0)
+        .py(10.0)
+        .gap(12.0)
+        .items_center()
+        .fill(k.c.danger.bg)
+        .radius(k.radius.md)
+        .child(message)
+        .child(retry)
 }
 
 /// "1,234 messages · 213 unread".
@@ -182,6 +220,13 @@ mod tests {
         assert_eq!(session.mailbox, "Label_2");
         assert_eq!(session.rows.len(), 2, "the two unread samples carry Work");
         assert!(rt.find("sample-2").is_none());
+    }
+
+    #[test]
+    fn a_sync_error_stays_visible_with_a_retry() {
+        let rt = render("sync-error");
+        assert!(rt.find("sync-error").is_some());
+        assert!(rt.find("sync-retry").is_some());
     }
 
     #[test]

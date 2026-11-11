@@ -28,7 +28,11 @@ impl Store {
     pub fn clear_messages(&mut self, account: AccountId) -> Result<()> {
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM messages WHERE account_id = ?1", [account.0])?;
-        tx.execute("UPDATE accounts SET history_id = NULL, full_sync_start = NULL WHERE id = ?1", [account.0])?;
+        tx.execute(
+            "UPDATE accounts SET history_id = NULL, full_sync_start = NULL, backfill_before = NULL, backfill_done = 0
+             WHERE id = ?1",
+            [account.0],
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -63,11 +67,33 @@ impl Store {
     }
 
     /// Ends a full sync: later syncs replay changes from where it started.
+    /// Older mail is then loaded from the oldest inbox message the full sync fetched.
     pub fn finish_full_sync(&self, account: AccountId) -> Result<()> {
         self.conn.execute(
-            "UPDATE accounts SET history_id = full_sync_start, full_sync_start = NULL
+            "UPDATE accounts SET history_id = full_sync_start, full_sync_start = NULL, backfill_done = 0,
+                 backfill_before = (SELECT min(received_at) FROM message_labels
+                                    WHERE account_id = ?1 AND label_id = 'INBOX')
              WHERE id = ?1 AND full_sync_start IS NOT NULL",
             [account.0],
+        )?;
+        Ok(())
+    }
+
+    /// How far back older mail has been loaded: `None` before it starts, and whether it's done.
+    pub fn backfill(&self, account: AccountId) -> Result<(Option<i64>, bool)> {
+        Ok(self
+            .conn
+            .query_row("SELECT backfill_before, backfill_done FROM accounts WHERE id = ?1", [account.0], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .optional()?
+            .unwrap_or((None, false)))
+    }
+
+    pub fn set_backfill(&self, account: AccountId, before: Option<i64>, done: bool) -> Result<()> {
+        self.conn.execute(
+            "UPDATE accounts SET backfill_before = ?2, backfill_done = ?3 WHERE id = ?1",
+            params![account.0, before, done],
         )?;
         Ok(())
     }

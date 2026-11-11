@@ -85,6 +85,12 @@ const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE accounts ADD COLUMN full_sync_start TEXT;
     ",
+    // 3: loading older mail in the background. `backfill_before` is the receive time (Unix ms)
+    // older mail is listed from; it moves back one batch at a time until Gmail has no more.
+    "
+    ALTER TABLE accounts ADD COLUMN backfill_before INTEGER;
+    ALTER TABLE accounts ADD COLUMN backfill_done INTEGER NOT NULL DEFAULT 0;
+    ",
 ];
 
 pub(crate) fn migrate(conn: &mut Connection) -> Result<()> {

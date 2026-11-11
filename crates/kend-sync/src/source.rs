@@ -11,9 +11,11 @@ pub trait MailSource: Sync {
     fn history_id(&self) -> kend_gmail::Result<String>;
     fn labels(&self) -> kend_gmail::Result<Vec<Label>>;
     /// Up to `max` message ids in `label`, newest first, and the next page's token.
+    /// Narrowed by a Gmail `search` (`before:1700000000`) when given.
     fn list(
         &self,
         label: &str,
+        search: Option<&str>,
         page_token: Option<&str>,
         max: usize,
     ) -> kend_gmail::Result<(Vec<String>, Option<String>)>;
@@ -52,10 +54,11 @@ impl MailSource for Gmail {
     fn list(
         &self,
         label: &str,
+        search: Option<&str>,
         page_token: Option<&str>,
         max: usize,
     ) -> kend_gmail::Result<(Vec<String>, Option<String>)> {
-        let page = self.list_messages(label, page_token, max.min(500) as u32)?;
+        let page = self.list_messages(label, search, page_token, max.min(500) as u32)?;
         Ok((page.messages.into_iter().map(|m| m.id).collect(), page.next_page_token))
     }
 

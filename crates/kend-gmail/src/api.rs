@@ -182,10 +182,18 @@ impl Gmail {
         Ok(self.get::<Labels>("/labels", &[], 1)?.labels)
     }
 
-    /// One page of message ids in `label`, newest first.
-    pub fn list_messages(&self, label: &str, page_token: Option<&str>, max: u32) -> Result<MessageList> {
+    /// One page of message ids in `label`, newest first, optionally narrowed by a Gmail
+    /// search (`before:1700000000`).
+    pub fn list_messages(
+        &self,
+        label: &str,
+        search: Option<&str>,
+        page_token: Option<&str>,
+        max: u32,
+    ) -> Result<MessageList> {
         let max = max.to_string();
         let mut query = vec![("labelIds", label), ("maxResults", max.as_str())];
+        query.extend(search.map(|q| ("q", q)));
         query.extend(page_token.map(|t| ("pageToken", t)));
         self.get("/messages", &query, 5)
     }
@@ -234,7 +242,11 @@ impl Gmail {
                     self.forget_token();
                 }
                 // Pause every thread, not just this one; the pacer makes this request wait too.
-                Err(Error::RateLimited) if attempt < ATTEMPTS => self.pacer.cool_down(backoff(attempt)),
+                Err(Error::RateLimited) if attempt < ATTEMPTS => {
+                    let pause = backoff(attempt);
+                    eprintln!("kend: Gmail rate limit, pausing all requests for {:.1} s", pause.as_secs_f64());
+                    self.pacer.cool_down(pause);
+                }
                 Err(err) if err.is_transient() && attempt < ATTEMPTS => thread::sleep(backoff(attempt)),
                 Err(err) => return Err(err),
             }

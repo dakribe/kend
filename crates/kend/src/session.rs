@@ -30,13 +30,18 @@ pub struct Session {
     pub labels: Vec<Label>,
     pub labels_collapsed: bool,
     pub sync: SyncStatus,
+    /// Why the last sync failed. Stays until a sync succeeds, so it can be read.
+    pub error: Option<String>,
     worker: Option<SyncWorker>,
 }
 
 pub enum SyncStatus {
-    Syncing { fetched: usize },
+    Syncing {
+        fetched: usize,
+    },
     Synced,
-    Failed(String),
+    /// Up to date with new mail, still loading older mail in the background.
+    LoadingOlder,
 }
 
 impl Session {
@@ -56,6 +61,7 @@ impl Session {
             labels: Vec::new(),
             labels_collapsed: false,
             sync: SyncStatus::Syncing { fetched: 0 },
+            error: None,
             worker,
         };
         session.reload();
@@ -130,9 +136,14 @@ impl Session {
     /// Applies a worker update. Returns true when Google signed the account out.
     pub fn apply(&mut self, update: SyncUpdate) -> bool {
         match update {
+            // While older mail loads, each round's progress keeps saying so.
+            SyncUpdate::Progress(_) if matches!(self.sync, SyncStatus::LoadingOlder) => {}
             SyncUpdate::Progress(fetched) => self.sync = SyncStatus::Syncing { fetched },
-            SyncUpdate::Finished(Ok(_)) => self.sync = SyncStatus::Synced,
-            SyncUpdate::Finished(Err(err)) => self.sync = SyncStatus::Failed(err),
+            SyncUpdate::Finished(Ok(report)) => {
+                self.error = None;
+                self.sync = if report.more_to_load { SyncStatus::LoadingOlder } else { SyncStatus::Synced }
+            }
+            SyncUpdate::Finished(Err(err)) => self.error = Some(err),
             SyncUpdate::SignedOut => return true,
         }
         self.reload();

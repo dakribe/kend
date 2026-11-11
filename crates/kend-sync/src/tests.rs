@@ -35,7 +35,8 @@ impl Fake {
     fn with_inbox(count: usize) -> Self {
         let fake = Fake { history_id: Mutex::new("100".into()), ..Fake::default() };
         for i in (0..count).rev() {
-            fake.add(message(&format!("m{i:03}"), i as i64, &["INBOX"]));
+            // A second apart, as `before:` searches by whole seconds.
+            fake.add(message(&format!("m{i:03}"), i as i64 * 1000, &["INBOX"]));
         }
         fake
     }
@@ -61,10 +62,17 @@ impl MailSource for Fake {
     fn list(
         &self,
         _label: &str,
+        search: Option<&str>,
         page_token: Option<&str>,
         max: usize,
     ) -> kend_gmail::Result<(Vec<String>, Option<String>)> {
-        let inbox = self.inbox.lock().unwrap();
+        let mut inbox = self.inbox.lock().unwrap().clone();
+        // Gmail's `before:SECONDS`, by receive time.
+        if let Some(before) = search.and_then(|q| q.strip_prefix("before:")) {
+            let before: i64 = before.parse().unwrap();
+            let messages = self.messages.lock().unwrap();
+            inbox.retain(|id| messages.get(id).is_some_and(|m| m.received_at < before * 1000));
+        }
         let start: usize = page_token.map_or(0, |t| t.parse().unwrap());
         let end = (start + max).min(inbox.len());
         let next = (end < inbox.len()).then(|| end.to_string());
@@ -106,7 +114,7 @@ fn inbox_ids(store: &Store, account: AccountId) -> Vec<String> {
 }
 
 fn small() -> Options {
-    Options { inbox_limit: 25, page_size: 10, workers: 4 }
+    Options { inbox_limit: 25, backfill_batch: 10, page_size: 10, workers: 4 }
 }
 
 #[test]
@@ -116,11 +124,13 @@ fn the_first_sync_fetches_the_newest_inbox_page_by_page() {
     let mut progress = Vec::new();
     let report = sync(&fake, &mut store, a, &small(), &mut |n| progress.push(n)).unwrap();
 
-    assert_eq!(report, Report { full: true, fetched: 25, deleted: 0 });
-    assert_eq!(progress, [10, 20, 25]);
+    // The newest 25, then a batch of 10 listed older: the oldest stored one is listed again
+    // (the search reaches into its second, so mail from that second isn't skipped) and 9 are new.
+    assert_eq!(report, Report { full: true, fetched: 25, deleted: 0, backfilled: 9, more_to_load: true });
+    assert_eq!(progress, [10, 20, 25, 34]);
     assert_eq!(store.full_sync_start(a).unwrap(), None);
     let ids = inbox_ids(&store, a);
-    assert_eq!(ids.len(), 25);
+    assert_eq!(ids.len(), 34);
     assert_eq!(ids.first().map(String::as_str), Some("m039"));
     assert_eq!(store.history_id(a).unwrap().as_deref(), Some("100"));
     assert_eq!(store.labels(a).unwrap().len(), 1);
@@ -132,6 +142,41 @@ fn a_small_mailbox_stops_at_its_end() {
     let (mut store, a) = setup();
     let report = sync(&fake, &mut store, a, &small(), &mut |_| {}).unwrap();
     assert_eq!(report.fetched, 7);
+    assert!(!report.more_to_load, "nothing older than the whole mailbox");
+}
+
+#[test]
+fn older_mail_loads_a_batch_per_sync_until_none_is_left() {
+    let fake = Fake::with_inbox(60);
+    let (mut store, a) = setup();
+    let mut syncs = 0;
+    loop {
+        syncs += 1;
+        let report = sync(&fake, &mut store, a, &small(), &mut |_| {}).unwrap();
+        if !report.more_to_load {
+            break;
+        }
+        assert!(syncs < 10, "backfill never finished");
+    }
+    // 25 newest, then 9 new per sync: the other 35 take 4 syncs, and a 5th finds nothing older.
+    assert_eq!(syncs, 5);
+    let ids = inbox_ids(&store, a);
+    assert_eq!(ids.len(), 60);
+    assert_eq!(ids.last().map(String::as_str), Some("m000"));
+}
+
+#[test]
+fn an_old_message_moved_into_the_inbox_does_not_skip_older_mail() {
+    let fake = Fake::with_inbox(40);
+    let (mut store, a) = setup();
+    sync(&fake, &mut store, a, &small(), &mut |_| {}).unwrap(); // m039..m005 stored
+    // A very old message lands in the inbox through the change history.
+    fake.add(message("ancient", -5_000_000, &["INBOX"]));
+    *fake.changes.lock().unwrap() =
+        vec![ChangePage { changed: vec!["ancient".into()], history_id: "101".into(), ..ChangePage::default() }];
+    while sync(&fake, &mut store, a, &small(), &mut |_| {}).unwrap().more_to_load {}
+    let ids = inbox_ids(&store, a);
+    assert_eq!(ids.len(), 41, "m004..m000 still loaded, not skipped past `ancient`");
 }
 
 #[test]
@@ -142,7 +187,7 @@ fn later_syncs_apply_only_the_changes() {
     let before = fake.fetches.load(Ordering::Relaxed);
 
     // A new message arrives, one is read, one is deleted.
-    fake.add(message("new", 99, &["INBOX", "UNREAD"]));
+    fake.add(message("new", 99_000, &["INBOX", "UNREAD"]));
     fake.messages.lock().unwrap().get_mut("m004").unwrap().label_ids = vec!["INBOX".into(), "STARRED".into()];
     fake.messages.lock().unwrap().remove("m000");
     *fake.history_id.lock().unwrap() = "200".into();
@@ -157,7 +202,7 @@ fn later_syncs_apply_only_the_changes() {
     ];
 
     let report = sync(&fake, &mut store, a, &small(), &mut |_| {}).unwrap();
-    assert_eq!(report, Report { full: false, fetched: 2, deleted: 1 });
+    assert_eq!(report, Report { full: false, fetched: 2, deleted: 1, backfilled: 0, more_to_load: false });
     assert_eq!(fake.fetches.load(Ordering::Relaxed) - before, 2, "only changed messages are fetched");
     assert_eq!(inbox_ids(&store, a), ["new", "m004", "m003", "m002", "m001"]);
     assert!(store.list(a, "INBOX", None, 1).unwrap()[0].unread);
@@ -212,7 +257,8 @@ fn an_interrupted_first_sync_resumes_where_it_stopped() {
     let report = sync(&fake, &mut store, a, &small(), &mut |_| {}).unwrap();
     assert!(report.full);
     assert_eq!(report.fetched, 15, "only the 15 messages it didn't have");
-    assert_eq!(fake.fetches.load(Ordering::Relaxed) - before, 15);
-    assert_eq!(inbox_ids(&store, a).len(), 25);
+    assert_eq!(report.backfilled, 5, "then the 5 older ones");
+    assert_eq!(fake.fetches.load(Ordering::Relaxed) - before, 20);
+    assert_eq!(inbox_ids(&store, a).len(), 30);
     assert_eq!(store.history_id(a).unwrap().as_deref(), Some("100"));
 }

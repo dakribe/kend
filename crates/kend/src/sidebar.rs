@@ -56,7 +56,7 @@ pub fn sidebar(k: &Kit, email: &str, session: &Session) -> El {
                 .rows(rows),
         );
     }
-    let account = SidebarRow::new(email).subtitle(sync_status(&session.sync)).height(45.0).select_only();
+    let account = SidebarRow::new(email).subtitle(sync_status(session)).height(45.0).select_only();
     sidebar.footer(account.build(k).key("account")).build(k)
 }
 
@@ -81,12 +81,15 @@ fn leaf(name: &str) -> &str {
     name.rsplit('/').next().unwrap_or(name)
 }
 
-pub fn sync_status(status: &SyncStatus) -> String {
-    match status {
+pub fn sync_status(session: &Session) -> String {
+    if session.error.is_some() {
+        return "Sync paused".into();
+    }
+    match session.sync {
         SyncStatus::Syncing { fetched: 0 } => "Syncing…".into(),
         SyncStatus::Syncing { fetched } => format!("Syncing… {fetched} messages"),
         SyncStatus::Synced => "Up to date".into(),
-        SyncStatus::Failed(err) => format!("Sync paused: {err}"),
+        SyncStatus::LoadingOlder => "Loading older mail…".into(),
     }
 }
 
