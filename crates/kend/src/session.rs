@@ -1,19 +1,29 @@
-//! A signed-in session: the UI's own database connection, the inbox rows it shows and the
-//! sync worker feeding the database.
+//! A signed-in session: the UI's own database connection, the mailbox it shows and the sync
+//! worker feeding the database.
+
+use std::collections::HashMap;
+
+use kend_store::{AccountId, Label, LabelKind, MessageSummary, Store};
 
 use crate::sync_worker::{SyncUpdate, SyncWorker};
-use kend_store::{AccountId, MessageSummary, Store};
 
-/// How many inbox rows the list shows.
+/// How many rows the message list shows.
 const PAGE: usize = 100;
 
 pub struct Session {
     pub id: u64,
     store: Store,
     account: AccountId,
+    /// The selected mailbox's Gmail label id.
+    pub mailbox: String,
     pub rows: Vec<MessageSummary>,
+    /// Messages in the selected mailbox.
     pub total: u64,
-    pub unread: u64,
+    /// Unread messages per label id.
+    pub unread: HashMap<String, u64>,
+    /// The user's own labels, sorted so nested ones follow their parent.
+    pub labels: Vec<Label>,
+    pub labels_collapsed: bool,
     pub sync: SyncStatus,
     worker: Option<SyncWorker>,
 }
@@ -32,9 +42,12 @@ impl Session {
             id,
             store,
             account,
+            mailbox: "INBOX".into(),
             rows: Vec::new(),
             total: 0,
-            unread: 0,
+            unread: HashMap::new(),
+            labels: Vec::new(),
+            labels_collapsed: false,
             sync: SyncStatus::Syncing { fetched: 0 },
             worker,
         };
@@ -42,15 +55,32 @@ impl Session {
         Ok(session)
     }
 
+    pub fn unread_in(&self, label: &str) -> u64 {
+        self.unread.get(label).copied().unwrap_or(0)
+    }
+
+    pub fn select(&mut self, mailbox: &str) {
+        if self.mailbox != mailbox {
+            self.mailbox = mailbox.to_string();
+            self.reload();
+        }
+    }
+
+    /// Re-reads the selected mailbox, the unread counts and the labels. All local, ~1 ms.
     pub fn reload(&mut self) {
-        if let Ok(rows) = self.store.list(self.account, "INBOX", None, PAGE) {
+        if let Ok(rows) = self.store.list(self.account, &self.mailbox, None, PAGE) {
             self.rows = rows;
         }
-        if let Ok(total) = self.store.count(self.account, "INBOX") {
+        if let Ok(total) = self.store.count(self.account, &self.mailbox) {
             self.total = total;
         }
-        if let Ok(unread) = self.store.unread_count(self.account, "INBOX") {
+        if let Ok(unread) = self.store.unread_counts(self.account) {
             self.unread = unread;
+        }
+        if let Ok(labels) = self.store.labels(self.account) {
+            let mut labels: Vec<Label> = labels.into_iter().filter(|l| l.kind == LabelKind::User).collect();
+            labels.sort_by_key(|l| l.name.to_lowercase());
+            self.labels = labels;
         }
     }
 

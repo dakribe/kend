@@ -43,6 +43,25 @@ fn a_mailbox_lists_newest_first_with_flags() {
 }
 
 #[test]
+fn unread_counts_cover_every_label_at_once() {
+    let (mut store, a) = store();
+    store
+        .upsert_messages(
+            a,
+            &[
+                msg("m1", 1, &["INBOX", "UNREAD"]),
+                msg("m2", 2, &["INBOX", "Label_1", "UNREAD"]),
+                msg("m3", 3, &["Label_1"]),
+            ],
+        )
+        .unwrap();
+    let counts = store.unread_counts(a).unwrap();
+    assert_eq!(counts.get("INBOX"), Some(&2));
+    assert_eq!(counts.get("Label_1"), Some(&1));
+    assert_eq!(counts.get("SENT"), None);
+}
+
+#[test]
 fn missing_lists_ids_not_yet_stored() {
     let (mut store, a) = store();
     store.upsert_messages(a, &[msg("have", 1, &["INBOX"])]).unwrap();

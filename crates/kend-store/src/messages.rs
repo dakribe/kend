@@ -160,6 +160,18 @@ impl Store {
         Ok(count.max(0) as u64)
     }
 
+    /// Unread messages per label, in one pass over the unread messages.
+    pub fn unread_counts(&self, account: AccountId) -> Result<std::collections::HashMap<String, u64>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT ml.label_id, count(*) FROM message_labels u
+             JOIN message_labels ml ON ml.message_id = u.message_id AND ml.account_id = u.account_id
+             WHERE u.account_id = ?1 AND u.label_id = 'UNREAD'
+             GROUP BY ml.label_id",
+        )?;
+        let rows = stmt.query_map([account.0], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?.max(0) as u64)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     /// Unread messages in a mailbox, for the sidebar's badge.
     pub fn unread_count(&self, account: AccountId, label_id: &str) -> Result<u64> {
         // Walk the (smaller) UNREAD label and probe the mailbox by primary key, rather than

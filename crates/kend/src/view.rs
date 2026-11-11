@@ -1,10 +1,12 @@
 use kend_gmail::{Account, CancelToken};
-use kend_store::{Address, MessageSummary, NewMessage, Store};
+use kend_store::{Address, Label, LabelKind, MessageSummary, NewMessage, Store};
 use rune::{Align, Cx, El, ScrollSpec, col, el, row, text};
-use rune_kit::{Button, ButtonVariant, Kit, Spinner};
+use rune_kit::shell::{SidebarToggle, SplitView, Toolbar};
+use rune_kit::{Button, ButtonVariant, ControlSize, Kit, Spinner};
 
 use crate::app::{App, Auth};
 use crate::session::{Session, SyncStatus};
+use crate::sidebar::{mailbox_name, sidebar, sync_status};
 
 type Scene = (&'static str, fn(&mut App));
 
@@ -51,36 +53,32 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
                         .key("cancel"),
                 )
         }
-        Auth::SignedIn { account, session: Some(session) } => return inbox(&k, account, session),
+        Auth::SignedIn { account, session: Some(session) } => {
+            let inset = cx.titlebar_inset();
+            return mail(s, &k, inset, cx.is_reduced_motion(), account, session);
+        }
     };
     col().w_full().h_full().center().fill(k.c.bg_base).child(content)
 }
 
-fn inbox(k: &Kit, account: &Account, session: &Session) -> El {
-    let title = text("Inbox").font(k.ty.ui_medium).color(k.c.text_base);
-    let unread = text(counts(session.total, session.unread)).key("unread").font(k.ty.ui).color(k.c.text_muted);
-    let status = text(sync_status(&session.sync)).key("sync-status").font(k.ty.ui).color(match session.sync {
-        SyncStatus::Failed(_) => k.c.danger.fg,
-        _ => k.c.text_faint,
-    });
-    let header = row()
-        .w_full()
-        .h(52.0)
-        .px(20.0)
-        .gap(12.0)
-        .items_center()
-        .child(title)
-        .child(unread)
-        .child(el().grow(1.0))
-        .child(status)
-        .child(
+/// The signed-in window: the sidebar beside the selected mailbox's messages.
+fn mail(s: &App, k: &Kit, titlebar_inset: f32, reduced_motion: bool, account: &Account, session: &Session) -> El {
+    let title = text(mailbox_name(session)).key("mailbox-title").font(k.ty.ui_medium).color(k.c.text_base);
+    let counts = text(counts(session.total, session.unread_in(&session.mailbox)))
+        .key("counts")
+        .font(k.ty.ui)
+        .color(k.c.text_muted);
+    let toolbar = Toolbar::new()
+        .leading(row().gap(10.0).items_center().child(title).child(counts))
+        .trailing(
             Button::new("Sync now")
                 .variant(ButtonVariant::Ghost)
+                .help(sync_status(&session.sync))
                 .on_press(|s: &mut App| s.sync_now())
                 .build(k)
                 .key("sync-now"),
         )
-        .child(
+        .trailing(
             Button::new("Sign out")
                 .variant(ButtonVariant::Ghost)
                 .help(format!("Signed in as {}", account.email))
@@ -88,26 +86,34 @@ fn inbox(k: &Kit, account: &Account, session: &Session) -> El {
                 .build(k)
                 .key("sign-out"),
         );
-    let divider = el().w_full().h(1.0).fill(k.c.border_muted);
+    SplitView::new(message_list(k, session))
+        .sidebar(&s.sidebar, |s: &mut App| &mut s.sidebar, sidebar(k, &account.email, session))
+        .toolbar(toolbar)
+        .titlebar_inset(titlebar_inset)
+        .frame_inset(8.0)
+        .toolbar_in_panel()
+        .sidebar_padding(12.0, 8.0)
+        .sidebar_toggle(SidebarToggle::new().size(ControlSize::Large).past_lights(16.0).edge(18.0).gap(4.0).in_header())
+        .reduced_motion(reduced_motion)
+        .build(k)
+}
 
-    let body = if session.rows.is_empty() {
-        let note = if matches!(session.sync, SyncStatus::Syncing { .. }) {
-            "Loading your inbox…"
-        } else {
-            "Your inbox is empty."
+fn message_list(k: &Kit, session: &Session) -> El {
+    if session.rows.is_empty() {
+        let note = match session.sync {
+            SyncStatus::Syncing { .. } => "Loading your mail…",
+            _ => "Nothing here.",
         };
-        col().w_full().grow(1.0).center().child(message(k, note).key("empty"))
-    } else {
-        let rows = col().w_full().children(session.rows.iter().map(|m| message_row(k, m)));
-        col().key("messages").w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(rows)
-    };
-    col().w_full().h_full().fill(k.c.bg_base).child(header).child(divider).child(body)
+        return col().key("messages").w_full().h_full().center().child(message(k, note).key("empty"));
+    }
+    let rows = col().w_full().children(session.rows.iter().map(|m| message_row(k, m)));
+    col().key("messages").w_full().h_full().min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(rows)
 }
 
 fn message_row(k: &Kit, m: &MessageSummary) -> El {
     let (weight, ink) = if m.unread { (k.ty.ui_medium, k.c.text_base) } else { (k.ty.ui, k.c.text_muted) };
     let dot = el().size(8.0, 8.0).radius(4.0).fill(if m.unread { k.c.text_accent } else { k.c.bg_base });
-    let from = text(m.from.display()).font(weight).color(ink).truncate().w(200.0);
+    let from = text(m.from.display()).font(weight).color(ink).truncate().w(180.0);
     let subject = if m.subject.is_empty() { "(no subject)" } else { &m.subject };
     let line = row()
         .grow(1.0)
@@ -115,16 +121,7 @@ fn message_row(k: &Kit, m: &MessageSummary) -> El {
         .gap(8.0)
         .child(text(subject).font(weight).color(ink).truncate().shrink())
         .child(text(&m.snippet).font(k.ty.ui).color(k.c.text_faint).truncate().grow(1.0).min_w(0.0));
-    row().key(m.gmail_id.clone()).w_full().h(40.0).px(20.0).gap(12.0).items_center().child(dot).child(from).child(line)
-}
-
-fn sync_status(status: &SyncStatus) -> String {
-    match status {
-        SyncStatus::Syncing { fetched: 0 } => "Syncing…".into(),
-        SyncStatus::Syncing { fetched } => format!("Syncing… {fetched} messages"),
-        SyncStatus::Synced => "Up to date".into(),
-        SyncStatus::Failed(err) => format!("Sync paused: {err}. Retrying shortly"),
-    }
+    row().key(m.gmail_id.clone()).w_full().h(40.0).px(16.0).gap(12.0).items_center().child(dot).child(from).child(line)
 }
 
 /// "1,234 messages · 213 unread".
@@ -191,7 +188,11 @@ fn sample_inbox(sync: SyncStatus) -> Auth {
             subject: (*subject).into(),
             snippet: (*snippet).into(),
             received_at: 1_000 - i as i64,
-            label_ids: if *unread { vec!["INBOX".into(), "UNREAD".into()] } else { vec!["INBOX".into()] },
+            label_ids: if *unread {
+                vec!["INBOX".into(), "UNREAD".into(), "Label_2".into()]
+            } else {
+                vec!["INBOX".into()]
+            },
             ..NewMessage::default()
         })
         .collect();
@@ -199,6 +200,11 @@ fn sample_inbox(sync: SyncStatus) -> Auth {
     let session = Store::open_in_memory()
         .and_then(|mut store| {
             let id = store.upsert_account(&account.email)?;
+            let label = |id: &str, name: &str| Label { id: id.into(), name: name.into(), kind: LabelKind::User };
+            store.replace_labels(
+                id,
+                &[label("Label_1", "Receipts"), label("Label_2", "Work"), label("Label_3", "Work/Clients")],
+            )?;
             store.upsert_messages(id, &messages)?;
             Session::open(1, store, &account.email, None)
         })
@@ -236,9 +242,24 @@ mod tests {
     #[test]
     fn the_inbox_lists_stored_messages() {
         let rt = render("inbox");
-        for key in ["sample-0", "sample-1", "sample-2", "sync-now", "unread"] {
+        for key in
+            ["sample-0", "sample-1", "sample-2", "sync-now", "counts", "mailbox-INBOX", "mailbox-Label_3", "account"]
+        {
             assert!(rt.find(key).is_some(), "{key} missing");
         }
+    }
+
+    #[test]
+    fn choosing_a_label_shows_its_messages() {
+        let mut rt = render("inbox");
+        let (x, y) = rt.find("mailbox-Label_2").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+        let Auth::SignedIn { session: Some(session), .. } = &rt.state.auth else { panic!("signed out") };
+        assert_eq!(session.mailbox, "Label_2");
+        assert_eq!(session.rows.len(), 2, "the two unread samples carry Work");
+        assert!(rt.find("sample-2").is_none());
     }
 
     #[test]

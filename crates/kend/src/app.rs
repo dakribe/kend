@@ -6,13 +6,17 @@ use std::thread;
 
 use kend_gmail::{Account, CancelToken, ClientCredentials, Error};
 use kend_store::Store;
-use rune::{Tx, Waker};
+use rune::{KeyEvent, Tx, Waker};
+use rune_kit::PaneState;
+use rune_kit::shell;
 
 use crate::session::Session;
 use crate::sync_worker::{Spec, SyncUpdate, SyncWorker};
 
 pub struct App {
     pub auth: Auth,
+    /// The sidebar's width and whether it's open.
+    pub sidebar: PaneState,
     client: Option<ClientCredentials>,
     sender: Sender<Event>,
     events: Receiver<Event>,
@@ -55,7 +59,15 @@ impl App {
     pub fn with_client(client: Option<ClientCredentials>) -> Self {
         let (sender, events) = channel();
         let auth = if client.is_some() { Auth::Loading } else { Auth::NotConfigured };
-        Self { auth, client, sender, events, waker: None, next_attempt: 0 }
+        Self {
+            auth,
+            sidebar: PaneState::new(232.0).range(180.0, 360.0),
+            client,
+            sender,
+            events,
+            waker: None,
+            next_attempt: 0,
+        }
     }
 
     /// Runs once at launch with the waker background threads use to wake `poll`.
@@ -154,9 +166,37 @@ impl App {
     }
 
     pub fn sync_now(&mut self) {
-        if let Auth::SignedIn { session: Some(session), .. } = &mut self.auth {
+        if let Some(session) = self.session_mut() {
             session.sync_now();
         }
+    }
+
+    pub fn select_mailbox(&mut self, mailbox: &str) {
+        if let Some(session) = self.session_mut() {
+            session.select(mailbox);
+        }
+    }
+
+    pub fn toggle_labels(&mut self) {
+        if let Some(session) = self.session_mut() {
+            session.labels_collapsed = !session.labels_collapsed;
+        }
+    }
+
+    fn session_mut(&mut self) -> Option<&mut Session> {
+        match &mut self.auth {
+            Auth::SignedIn { session: Some(session), .. } => Some(session),
+            _ => None,
+        }
+    }
+
+    /// Window-wide shortcuts: ⇧⌘B shows and hides the sidebar.
+    pub fn on_key(&mut self, event: &KeyEvent, _tx: &mut Tx) -> bool {
+        if shell::is_sidebar_toggle(event) {
+            self.sidebar.toggle();
+            return true;
+        }
+        false
     }
 
     /// Stops sync, then (off the UI thread) deletes the account's local mail and revokes its
@@ -258,7 +298,7 @@ mod tests {
 
         assert!(app.apply(Event::Sync { session: 7, update: SyncUpdate::Progress(1) }));
         let Auth::SignedIn { session: Some(session), .. } = &app.auth else { unreachable!() };
-        assert_eq!((session.rows.len(), session.unread), (1, 1));
+        assert_eq!((session.rows.len(), session.unread_in("INBOX")), (1, 1));
         assert!(matches!(session.sync, SyncStatus::Syncing { fetched: 1 }));
     }
 
