@@ -1,0 +1,7 @@
+/target
+.DS_Store
+# Local secrets and data: OAuth client files, tokens, the mail database.
+*.sqlite
+*.sqlite-*
+client_secret*.json
+.env
