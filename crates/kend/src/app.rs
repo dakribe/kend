@@ -13,7 +13,7 @@ use rune_kit::shell;
 
 use crate::compose::{Compose, Field, SendState};
 use crate::palette::Palette;
-use crate::session::{Move, Moved, Session};
+use crate::session::{Mark, Move, Moved, Session};
 use crate::sync_worker::{Spec, SyncUpdate, SyncWorker};
 
 pub struct App {
@@ -74,6 +74,13 @@ pub enum Event {
     /// Gmail's answer to archiving or trashing messages: the ones it refused, to put back,
     /// and the first error.
     Moved {
+        session: u64,
+        failed: Vec<Moved>,
+        error: Option<String>,
+    },
+    /// Gmail's answer to starring or marking messages read or unread: the ones it refused,
+    /// to put back, and the first error.
+    Marked {
         session: u64,
         failed: Vec<Moved>,
         error: Option<String>,
@@ -174,6 +181,14 @@ impl App {
             {
                 if let Some(error) = error {
                     session.move_failed(&failed, error);
+                }
+                return true;
+            }
+            (Auth::SignedIn { session: Some(session), .. }, Event::Marked { session: id, failed, error })
+                if session.id == id =>
+            {
+                if let Some(error) = error {
+                    session.mark_failed(&failed, error);
                 }
                 return true;
             }
@@ -360,6 +375,41 @@ impl App {
                 Move::Trash => gmail.trash(&m.gmail_id),
             });
             Event::Moved { session: id, failed, error }
+        });
+    }
+
+    /// Stars, unstars or marks read or unread the open, checked or selected messages.
+    pub fn mark(&mut self, mark: Mark) {
+        let Some(session) = self.session_mut() else { return };
+        let targets = session.targets();
+        self.mark_ids(&targets, mark);
+    }
+
+    /// S: stars the targets, or unstars them when they're all starred already.
+    pub fn toggle_star(&mut self) {
+        let Some(session) = self.session() else { return };
+        let mark = session.star_mark();
+        self.mark(mark);
+    }
+
+    /// The star on one row: toggles that message only.
+    pub fn toggle_star_of(&mut self, gmail_id: &str, starred: bool) {
+        self.mark_ids(&[gmail_id.to_string()], if starred { Mark::Unstar } else { Mark::Star });
+    }
+
+    /// Changes `ids` here at once, then in Gmail in the background.
+    fn mark_ids(&mut self, ids: &[String], mark: Mark) {
+        let Some(session) = self.session_mut() else { return };
+        let changed = session.mark(ids, mark);
+        let (id, Some(gmail)) = (session.id, session.gmail.clone()) else { return };
+        if changed.is_empty() {
+            return;
+        }
+        self.spawn("mark", move || {
+            let label = [mark.label()];
+            let (add, remove): (&[&str], &[&str]) = if mark.adds() { (&label, &[]) } else { (&[], &label) };
+            let (failed, error) = each_in_gmail(changed, |m| gmail.modify_labels(&m.gmail_id, add, remove));
+            Event::Marked { session: id, failed, error }
         });
     }
 
@@ -633,6 +683,18 @@ impl App {
             }
             Key::Delete | Key::Backspace if plain => {
                 self.move_message(Move::Trash);
+                return true;
+            }
+            Key::Text(t) if plain && t == "s" => {
+                self.toggle_star();
+                return true;
+            }
+            Key::Text(t) if plain && t == "U" => {
+                self.mark(Mark::Unread);
+                return true;
+            }
+            Key::Text(t) if plain && t == "I" => {
+                self.mark(Mark::Read);
                 return true;
             }
             Key::Text(t) if plain && t == "z" => {
@@ -1141,6 +1203,58 @@ mod tests {
         assert_eq!(ids(&session.move_messages(Move::Archive)), ["m0002"], "only the open message moves");
         let checked: Vec<_> = session.checked.iter().map(String::as_str).collect();
         assert_eq!(checked, ["m0000"]);
+    }
+
+    fn row(app: &App, id: &str) -> kend_store::MessageSummary {
+        app.session().unwrap().visible().iter().find(|m| m.gmail_id == id).unwrap().clone()
+    }
+
+    #[test]
+    fn s_stars_and_unstars_the_selection() {
+        let mut app = App::with_client(None);
+        signed_in_with(&mut app, 4, false);
+        press(&mut app, Key::Text("j".into()));
+        press(&mut app, Key::Text("s".into()));
+        assert!(row(&app, "m0000").starred);
+        assert_eq!(app.session().unwrap().unread_in("STARRED"), 0, "read mail, so no unread stars");
+        press(&mut app, Key::Text("J".into()));
+        press(&mut app, Key::Text("s".into()));
+        assert!(row(&app, "m0000").starred && row(&app, "m0001").starred, "one unstarred: star them all");
+        press(&mut app, Key::Text("s".into()));
+        assert!(!row(&app, "m0000").starred && !row(&app, "m0001").starred, "all starred: unstar them all");
+    }
+
+    #[test]
+    fn shift_u_marks_unread_and_shift_i_marks_read() {
+        let mut app = App::with_client(None);
+        signed_in_with(&mut app, 3, false);
+        press(&mut app, Key::Text("j".into()));
+        press(&mut app, Key::Enter);
+        assert_eq!(reading(&app), Some("m0000"));
+        press(&mut app, Key::Text("U".into()));
+        assert_eq!(reading(&app), None, "marking the open message unread goes back to the list");
+        assert!(row(&app, "m0000").unread);
+        assert_eq!(app.session().unwrap().unread_in("INBOX"), 1);
+        press(&mut app, Key::Text("I".into()));
+        assert!(!row(&app, "m0000").unread);
+    }
+
+    #[test]
+    fn a_refused_mark_is_put_back() {
+        let mut session = session_with(2);
+        let changed = session.mark(&["m0001".into()], Mark::Star);
+        assert!(session.visible()[1].starred);
+        session.mark_failed(&changed, "offline".into());
+        assert!(!session.visible()[1].starred);
+        assert!(session.error.as_deref().is_some_and(|e| e.contains("offline")));
+    }
+
+    #[test]
+    fn starring_the_open_message_updates_its_view() {
+        let mut session = session_with(2);
+        session.open_message("m0000");
+        session.mark(&["m0000".into()], Mark::Star);
+        assert!(session.reading.as_ref().unwrap().message.summary.starred);
     }
 
     #[test]

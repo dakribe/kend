@@ -6,8 +6,8 @@ use std::borrow::Cow;
 
 use jiff::Zoned;
 use kend_store::MessageSummary;
-use rune::{Align, El, GrowthSpec, ScrollSpec, col, el, memo, row, text};
-use rune_kit::{Checkbox, Kit};
+use rune::{Align, El, GrowthSpec, ScrollSpec, col, el, icon, memo, row, text};
+use rune_kit::{Checkbox, Kit, glyphs};
 
 use crate::app::App;
 use crate::dates;
@@ -56,6 +56,30 @@ pub fn message_list(k: &Kit, dark: bool, session: &Session) -> El {
 
 /// One message. ⌘-click checks it, Shift-click checks a range, a plain click opens it; the
 /// checkbox checks it without opening.
+/// The row's star: filled when starred, a faint outline otherwise. Clicking it toggles just
+/// this message.
+fn star(k: &Kit, m: &MessageSummary) -> El {
+    let (glyph, color, help) = if m.starred {
+        (&glyphs::STAR_FILLED, k.c.warning.fg, "Unstar (S)")
+    } else {
+        (&glyphs::STAR, k.c.text_faint, "Star (S)")
+    };
+    let (id, starred) = (m.gmail_id.clone(), m.starred);
+    row()
+        .key("star")
+        .role("button")
+        .label(help)
+        .size(24.0, 24.0)
+        .center()
+        .radius(k.radius.sm)
+        .hover(k.c.hover)
+        .child(icon(glyph, 14.0).color(color))
+        .on_press_tx(move |s: &mut App, tx: &mut rune::Tx| {
+            tx.instant();
+            s.toggle_star_of(&id, starred);
+        })
+}
+
 fn message_row(k: &Kit, m: &MessageSummary, selected: bool, checked: bool, date: &str) -> El {
     let (weight, ink) = if m.unread { (k.ty.ui_medium, k.c.text_base) } else { (k.ty.ui, k.c.text_muted) };
     let mut dot = el().size(8.0, 8.0).radius(4.0);
@@ -102,6 +126,7 @@ fn message_row(k: &Kit, m: &MessageSummary, selected: bool, checked: bool, date:
         .child(dot)
         .child(from)
         .child(line)
+        .child(star(k, m))
         .child(date);
     if checked {
         r = r.fill(k.c.layer_03);

@@ -67,6 +67,29 @@ pub enum Move {
     Trash,
 }
 
+/// Starring and read state, changed on the targets the way archive is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    Star,
+    Unstar,
+    Read,
+    Unread,
+}
+
+impl Mark {
+    /// The Gmail label this adds or removes.
+    pub fn label(self) -> &'static str {
+        match self {
+            Mark::Star | Mark::Unstar => "STARRED",
+            Mark::Read | Mark::Unread => "UNREAD",
+        }
+    }
+
+    pub fn adds(self) -> bool {
+        matches!(self, Mark::Star | Mark::Unread)
+    }
+}
+
 /// A moved message and the labels it had before, to put it back.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Moved {
@@ -470,6 +493,71 @@ impl Session {
         });
         self.last_move = Some(Undo { messages: moved.clone(), action });
         moved
+    }
+
+    /// Stars, unstars, or marks read or unread `ids`, locally and at once. Marking the open
+    /// message unread goes back to the list, as Gmail does. Returns what changed; the caller
+    /// tells Gmail.
+    pub fn mark(&mut self, ids: &[String], mark: Mark) -> Vec<Moved> {
+        let label = mark.label();
+        let mut changed = Vec::new();
+        for gmail_id in ids {
+            let Some(previous) = self.labels_of(gmail_id) else { continue };
+            let has = previous.iter().any(|l| l == label);
+            if has == mark.adds() {
+                continue;
+            }
+            let mut labels = previous.clone();
+            if mark.adds() {
+                labels.push(label.into());
+            } else {
+                labels.retain(|l| l != label);
+            }
+            if self.store.set_labels(self.account, gmail_id, &labels).unwrap_or(false) {
+                changed.push(Moved { gmail_id: gmail_id.clone(), previous });
+            }
+        }
+        if changed.is_empty() {
+            return changed;
+        }
+        self.notice = None;
+        if let Some(reading) = &mut self.reading
+            && changed.iter().any(|m| m.gmail_id == reading.message.summary.gmail_id)
+        {
+            match mark {
+                Mark::Unread => self.reading = None,
+                _ => reading.message.summary.starred = mark == Mark::Star,
+            }
+        }
+        if let Some(results) = &mut self.results {
+            for m in results.iter_mut().filter(|m| changed.iter().any(|c| c.gmail_id == m.gmail_id)) {
+                match mark {
+                    Mark::Star | Mark::Unstar => m.starred = mark == Mark::Star,
+                    Mark::Read | Mark::Unread => m.unread = mark == Mark::Unread,
+                }
+            }
+            self.rows_version += 1;
+        }
+        self.reload();
+        changed
+    }
+
+    /// S: stars the targets, or unstars them when every one is already starred.
+    pub fn star_mark(&self) -> Mark {
+        let targets = self.targets();
+        let all_starred = !targets.is_empty()
+            && targets.iter().all(|id| self.labels_of(id).is_some_and(|l| l.iter().any(|l| l == "STARRED")));
+        if all_starred { Mark::Unstar } else { Mark::Star }
+    }
+
+    /// Gmail refused some label changes: put those messages back and say why.
+    pub fn mark_failed(&mut self, failed: &[Moved], error: String) {
+        for m in failed {
+            let _ = self.store.set_labels(self.account, &m.gmail_id, &m.previous);
+        }
+        let what = if failed.len() == 1 { "the message".to_string() } else { format!("{} messages", failed.len()) };
+        self.error = Some(format!("Couldn't update {what}: {error}"));
+        self.reload();
     }
 
     fn labels_of(&self, gmail_id: &str) -> Option<Vec<String>> {

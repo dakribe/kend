@@ -7,7 +7,7 @@ use rune_kit::{Button, ButtonVariant, Kit, Markdown};
 use crate::app::App;
 use crate::app::instant;
 use crate::dates;
-use crate::session::{BodyState, Move, Reading};
+use crate::session::{BodyState, Mark, Move, Reading};
 use crate::view::ghost;
 
 const SUBJECT: TextStyle = TextStyle::new(20.0, 600.0).lh(27.0);
@@ -17,7 +17,7 @@ const BODY: TextStyle = TextStyle::new(14.0, 400.0).lh(22.0);
 const MEASURE: f32 = 720.0;
 
 /// What you can do with the open message.
-fn actions(k: &Kit, has_html: bool) -> El {
+fn actions(k: &Kit, has_html: bool, starred: bool) -> El {
     let mut bar = row()
         .key("reading-actions")
         .w_full()
@@ -28,7 +28,13 @@ fn actions(k: &Kit, has_html: bool) -> El {
         .child(ghost(k, "Reply", "Reply (R)", "reply", |s| s.reply(false)))
         .child(ghost(k, "Forward", "Forward (F)", "forward", |s| s.reply(true)))
         .child(ghost(k, "Archive", "Archive (E)", "archive", |s| s.move_message(Move::Archive)))
-        .child(ghost(k, "Delete", "Move to Trash (#)", "delete", |s| s.move_message(Move::Trash)));
+        .child(ghost(k, "Delete", "Move to Trash (#)", "delete", |s| s.move_message(Move::Trash)))
+        .child(if starred {
+            ghost(k, "Unstar", "Unstar (S)", "star", |s| s.mark(Mark::Unstar))
+        } else {
+            ghost(k, "Star", "Star (S)", "star", |s| s.mark(Mark::Star))
+        })
+        .child(ghost(k, "Mark Unread", "Mark as unread (⇧U)", "mark-unread", |s| s.mark(Mark::Unread)));
     if has_html {
         bar = bar.child(ghost(k, "Open in Browser", "See this email exactly as designed", "open-in-browser", |s| {
             s.open_in_browser()
@@ -114,7 +120,7 @@ pub fn reading_view(k: &Kit, dark: bool, reading: &Reading) -> El {
         .pt(12.0)
         .pb(48.0)
         .gap(20.0)
-        .child(actions(k, m.body_html.is_some()))
+        .child(actions(k, m.body_html.is_some(), m.summary.starred))
         .child(header)
         .child(el().w_full().h(1.0).fill(k.c.border_muted))
         .child(body);

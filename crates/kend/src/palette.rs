@@ -6,7 +6,7 @@ use rune::{El, KeyEvent, TextEdit, Tx, col, row, text};
 use rune_kit::{Keybind, Kit, TextInput};
 
 use crate::app::App;
-use crate::session::Move;
+use crate::session::{Mark, Move};
 use crate::sidebar::{MAILBOXES, leaf};
 
 /// Rows shown at most; typing narrows the rest.
@@ -32,6 +32,10 @@ pub enum Command {
     Archive,
     Delete,
     Undo,
+    Star,
+    Unstar,
+    MarkRead,
+    MarkUnread,
     SelectAll,
     ClearSelection,
     Search,
@@ -84,6 +88,18 @@ pub fn entries(app: &App) -> Vec<Entry> {
         };
         out.push(Entry::new(Archive, archive, &["E"]));
         out.push(Entry::new(Delete, delete, &["#"]));
+        let suffix = if n > 1 { format!(" {n} Messages") } else { String::new() };
+        match session.star_mark() {
+            Mark::Unstar => out.push(Entry::new(Unstar, format!("Unstar{suffix}"), &["S"])),
+            _ => out.push(Entry::new(Star, format!("Star{suffix}"), &["S"])),
+        }
+        let (read, unread) = if n > 1 {
+            (format!("Mark {n} Messages as Read"), format!("Mark {n} Messages as Unread"))
+        } else {
+            ("Mark as Read".into(), "Mark as Unread".into())
+        };
+        out.push(Entry::new(MarkRead, read, &["⇧I"]));
+        out.push(Entry::new(MarkUnread, unread, &["⇧U"]));
     }
     if session.last_move.is_some() {
         out.push(Entry::new(Undo, "Undo", &["Z"]));
@@ -205,6 +221,10 @@ impl App {
             Command::Archive => self.move_message(Move::Archive),
             Command::Delete => self.move_message(Move::Trash),
             Command::Undo => self.undo(),
+            Command::Star => self.mark(Mark::Star),
+            Command::Unstar => self.mark(Mark::Unstar),
+            Command::MarkRead => self.mark(Mark::Read),
+            Command::MarkUnread => self.mark(Mark::Unread),
             Command::SelectAll => self.check_all(),
             Command::ClearSelection => self.clear_checked(),
             Command::Search => tx.focus("search", true),

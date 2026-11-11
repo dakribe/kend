@@ -121,6 +121,9 @@ const SHORTCUTS: &[(&str, &[Shortcut])] = &[
         &[
             (&["E"], "Archive"),
             (&["#", "Delete"], "Move to Trash"),
+            (&["S"], "Star or unstar"),
+            (&["⇧U"], "Mark as unread"),
+            (&["⇧I"], "Mark as read"),
             (&["Z"], "Undo"),
             (&["R"], "Reply"),
             (&["F"], "Forward"),
@@ -581,6 +584,10 @@ mod tests {
         lands_in_one_frame(&mut rt, "archiving", |rt| key(rt, rune::Key::Text("e".into()), plain));
         lands_in_one_frame(&mut rt, "deleting", |rt| key(rt, rune::Key::Text("#".into()), plain));
         lands_in_one_frame(&mut rt, "undoing", |rt| key(rt, rune::Key::Text("z".into()), plain));
+        lands_in_one_frame(&mut rt, "starring", |rt| key(rt, rune::Key::Text("s".into()), plain));
+        lands_in_one_frame(&mut rt, "clicking a star", |rt| click(rt, "star"));
+        lands_in_one_frame(&mut rt, "marking unread", |rt| key(rt, rune::Key::Text("U".into()), plain));
+        lands_in_one_frame(&mut rt, "marking read", |rt| key(rt, rune::Key::Text("I".into()), plain));
         lands_in_one_frame(&mut rt, "Delete button", |rt| click(rt, "delete"));
         lands_in_one_frame(&mut rt, "checking a row", |rt| key(rt, rune::Key::Text("x".into()), plain));
         lands_in_one_frame(&mut rt, "extending the selection", |rt| key(rt, rune::Key::Text("J".into()), plain));
@@ -729,6 +736,16 @@ mod tests {
         rt.frame(1.0 / 60.0);
         let Auth::SignedIn { session: Some(session), .. } = &rt.state.auth else { panic!() };
         assert!(session.compose.is_some());
+    }
+
+    #[test]
+    fn clicking_a_rows_star_stars_only_that_message() {
+        let mut rt = render("inbox");
+        click(&mut rt, "star");
+        rt.frame(1.0 / 60.0);
+        let Auth::SignedIn { session: Some(session), .. } = &rt.state.auth else { panic!() };
+        assert!(session.reading.is_none(), "the star doesn't open the message");
+        assert_eq!(session.visible().iter().filter(|m| m.starred).count(), 1);
     }
 
     #[test]

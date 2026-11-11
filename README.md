@@ -31,6 +31,9 @@ everything you've already loaded works offline. The UI is native and GPU-rendere
 - **Archive and delete** (E, #) with Undo (Z). The change shows at once and is sent to Gmail
   in the background; if Gmail refuses, the message comes back with the reason. Delete moves
   mail to Trash, which Gmail empties after 30 days.
+- **Star and mark read or unread** (S, Shift+U, Shift+I), or click a row's star. Like
+  archive, these work on the open message, the selected ones or the current row, show at
+  once, and are put back with the reason if Gmail refuses.
 - **Select many at once** to archive or delete them together: X or the row's checkbox
   selects a message, Shift+J/K extends, ⌘A selects all, ⌘-click toggles and Shift-click selects
   a range. One Undo brings the whole batch back.
@@ -39,7 +42,7 @@ everything you've already loaded works offline. The UI is native and GPU-rendere
   come first.
 - **Compose, reply and forward**, with replies kept in their Gmail conversation.
 - **Keyboard first**: J/K or arrows to move, Return to open, Esc to go back, ⌘F or / to
-  search, E to archive, # to delete, Z to undo, R to reply, F to forward, ⌘N for a new message, ⌘Return to send, ⌘K for the command palette, and ? to see every shortcut.
+  search, E to archive, # to delete, S to star, Shift+U / Shift+I for unread / read, Z to undo, R to reply, F to forward, ⌘N for a new message, ⌘Return to send, ⌘K for the command palette, and ? to see every shortcut.
 - **Instant actions.** Nothing animates except loading indicators: opening a message, moving
   the selection, switching mailboxes and toggling the sidebar all land in the frame they
   happen, and a test checks it for each action.
