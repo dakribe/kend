@@ -453,7 +453,11 @@ impl Session {
             results.retain(|m| !moved.iter().any(|x| x.gmail_id == m.gmail_id));
         }
         self.reading = None;
-        self.clear_checked();
+        // Moved messages leave the selection; any others stay checked.
+        self.checked.retain(|id| !moved.iter().any(|m| &m.gmail_id == id));
+        if self.anchor.as_ref().is_some_and(|a| !self.checked.contains(a)) {
+            self.anchor = None;
+        }
         self.reload();
         let visible = self.visible();
         self.selected =

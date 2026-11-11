@@ -373,7 +373,7 @@ impl App {
     }
 
     /// A row click: ⌘-click checks or unchecks it, Shift-click checks the range up to it, and a
-    /// plain click opens it.
+    /// plain click opens it. The checked rows stay checked for when you come back to the list.
     pub fn click_row(&mut self, gmail_id: &str, mods: rune::Mods) {
         let Some(session) = self.session_mut() else { return };
         if mods.shift {
@@ -381,7 +381,6 @@ impl App {
         } else if mods.cmd {
             session.toggle_checked(gmail_id);
         } else {
-            session.clear_checked();
             self.open_message(gmail_id);
         }
     }
@@ -1084,7 +1083,8 @@ mod tests {
         assert_eq!(reading(&app), None, "modified clicks don't open");
         app.click_row("m0005", rune::Mods::default());
         assert_eq!(reading(&app), Some("m0005"));
-        assert!(checked(&app).is_empty(), "a plain click clears the selection");
+        press(&mut app, Key::Escape);
+        assert_eq!(checked(&app), ["m0001", "m0003", "m0004"], "still checked after reading a message");
     }
 
     #[test]
@@ -1107,6 +1107,17 @@ mod tests {
         assert_eq!(checked(&app), 5);
         press(&mut app, Key::Text("#".into()));
         assert!(app.session().unwrap().visible().is_empty(), "all five went to Trash");
+    }
+
+    #[test]
+    fn moving_the_open_message_keeps_the_others_checked() {
+        let mut session = session_with(4);
+        session.toggle_checked("m0000");
+        session.toggle_checked("m0002");
+        session.open_message("m0002");
+        assert_eq!(ids(&session.move_messages(Move::Archive)), ["m0002"], "only the open message moves");
+        let checked: Vec<_> = session.checked.iter().map(String::as_str).collect();
+        assert_eq!(checked, ["m0000"]);
     }
 
     #[test]
