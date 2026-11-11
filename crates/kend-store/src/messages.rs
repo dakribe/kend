@@ -4,6 +4,15 @@ use rusqlite::{OptionalExtension, Row, Transaction, params};
 
 use crate::{AccountId, Address, Cursor, Message, MessageId, MessageSummary, NewMessage, Result, Store};
 
+/// Messages in Trash or Spam show only in those mailboxes, as Gmail shows them. Gmail keeps a
+/// trashed message's other labels (so untrashing restores it), so lists must hide it.
+/// `{id}` is the message id column of the query it goes in.
+pub(crate) fn visible_outside_trash(id: &str) -> String {
+    format!(
+        "NOT EXISTS (SELECT 1 FROM message_labels hidden WHERE hidden.message_id = {id} AND hidden.label_id IN ('TRASH', 'SPAM'))"
+    )
+}
+
 /// The columns [`summary_from_row`] reads, in order, from `messages m`.
 pub(crate) const SUMMARY_COLUMNS: &str = "m.id, m.gmail_id, m.thread_id, m.from_name, m.from_email, m.subject, m.snippet, m.received_at, m.unread, m.starred";
 
@@ -141,9 +150,10 @@ impl Store {
         after: Option<Cursor>,
         limit: usize,
     ) -> Result<Vec<MessageSummary>> {
+        let hidden = visible_outside_trash("ml.message_id");
         let base = format!(
             "SELECT {SUMMARY_COLUMNS} FROM message_labels ml JOIN messages m ON m.id = ml.message_id
-             WHERE ml.account_id = ?1 AND ml.label_id = ?2"
+             WHERE ml.account_id = ?1 AND ml.label_id = ?2 AND (?2 IN ('TRASH', 'SPAM') OR {hidden})"
         );
         let order = "ORDER BY ml.received_at DESC, ml.message_id DESC LIMIT ?3";
         let limit = limit as i64;
@@ -199,8 +209,12 @@ impl Store {
 
     /// Messages in a mailbox.
     pub fn count(&self, account: AccountId, label_id: &str) -> Result<u64> {
+        let hidden = visible_outside_trash("ml.message_id");
         let count: i64 = self.conn.query_row(
-            "SELECT count(*) FROM message_labels WHERE account_id = ?1 AND label_id = ?2",
+            &format!(
+                "SELECT count(*) FROM message_labels ml
+                 WHERE ml.account_id = ?1 AND ml.label_id = ?2 AND (?2 IN ('TRASH', 'SPAM') OR {hidden})"
+            ),
             params![account.0, label_id],
             |r| r.get(0),
         )?;
@@ -209,12 +223,13 @@ impl Store {
 
     /// Unread messages per label, in one pass over the unread messages.
     pub fn unread_counts(&self, account: AccountId) -> Result<std::collections::HashMap<String, u64>> {
-        let mut stmt = self.conn.prepare_cached(
+        let hidden = visible_outside_trash("u.message_id");
+        let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT ml.label_id, count(*) FROM message_labels u
              JOIN message_labels ml ON ml.message_id = u.message_id AND ml.account_id = u.account_id
-             WHERE u.account_id = ?1 AND u.label_id = 'UNREAD'
-             GROUP BY ml.label_id",
-        )?;
+             WHERE u.account_id = ?1 AND u.label_id = 'UNREAD' AND (ml.label_id IN ('TRASH', 'SPAM') OR {hidden})
+             GROUP BY ml.label_id"
+        ))?;
         let rows = stmt.query_map([account.0], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?.max(0) as u64)))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }

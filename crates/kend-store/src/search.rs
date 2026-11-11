@@ -4,7 +4,7 @@
 
 use rusqlite::params;
 
-use crate::messages::{SUMMARY_COLUMNS, summary_from_row};
+use crate::messages::{SUMMARY_COLUMNS, summary_from_row, visible_outside_trash};
 use crate::{AccountId, MessageSummary, Result, Store};
 
 impl Store {
@@ -15,12 +15,14 @@ impl Store {
             return Ok(Vec::new());
         };
         // Rank inside the index, then join only the winners to read their rows.
+        let hidden = visible_outside_trash("m.id");
         let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT {SUMMARY_COLUMNS} FROM (
                  SELECT rowid, rank FROM messages_fts
                  WHERE messages_fts MATCH ?1 AND account_id = ?2
                  ORDER BY rank LIMIT ?3
              ) f JOIN messages m ON m.id = f.rowid
+             WHERE {hidden}
              ORDER BY f.rank, m.received_at DESC"
         ))?;
         let rows = stmt.query_map(params![fts_query, account.0, limit as i64], summary_from_row)?;

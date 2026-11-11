@@ -12,7 +12,7 @@ use rune_kit::PaneState;
 use rune_kit::shell;
 
 use crate::compose::{Compose, Field, SendState};
-use crate::session::Session;
+use crate::session::{Move, Session};
 use crate::sync_worker::{Spec, SyncUpdate, SyncWorker};
 
 pub struct App {
@@ -65,6 +65,18 @@ pub enum Event {
         session: u64,
         gmail_id: String,
         result: Result<Option<MessageBody>, String>,
+    },
+    /// Gmail's answer to archiving or trashing a message; `previous` puts it back on failure.
+    Moved {
+        session: u64,
+        gmail_id: String,
+        previous: Vec<String>,
+        result: Result<(), String>,
+    },
+    /// Gmail's answer to undoing a move.
+    Undone {
+        session: u64,
+        result: Result<(), String>,
     },
     /// Gmail's answer to sending a message.
     Sent {
@@ -148,6 +160,22 @@ impl App {
                 if session.id == id =>
             {
                 session.body_loaded(&gmail_id, result);
+                return true;
+            }
+            (
+                Auth::SignedIn { session: Some(session), .. },
+                Event::Moved { session: id, gmail_id, previous, result },
+            ) if session.id == id => {
+                if let Err(err) = result {
+                    session.move_failed(&gmail_id, &previous, err);
+                }
+                return true;
+            }
+            (Auth::SignedIn { session: Some(session), .. }, Event::Undone { session: id, result: Err(err) })
+                if session.id == id =>
+            {
+                // The next sync brings back whatever Gmail actually has.
+                session.error = Some(format!("Couldn't undo in Gmail: {err}"));
                 return true;
             }
             (Auth::SignedIn { session: Some(session), .. }, Event::Sent { session: id, result })
@@ -312,6 +340,34 @@ impl App {
         session.compose = Some(compose);
     }
 
+    /// Archives or trashes the open or selected message: at once here, then in Gmail.
+    pub fn move_message(&mut self, action: Move) {
+        let Some(session) = self.session_mut() else { return };
+        let Some(gmail_id) = session.move_message(action) else { return };
+        let previous = session.last_move.as_ref().map(|u| u.previous.clone()).unwrap_or_default();
+        let (id, Some(gmail)) = (session.id, session.gmail.clone()) else { return };
+        self.spawn("move", move || {
+            let result = match action {
+                Move::Archive => gmail.modify_labels(&gmail_id, &[], &["INBOX"]),
+                Move::Trash => gmail.trash(&gmail_id),
+            };
+            Event::Moved { session: id, gmail_id, previous, result: result.map_err(|e| e.to_string()) }
+        });
+    }
+
+    pub fn undo(&mut self) {
+        let Some(session) = self.session_mut() else { return };
+        let Some(undo) = session.undo_move() else { return };
+        let (id, Some(gmail)) = (session.id, session.gmail.clone()) else { return };
+        self.spawn("undo", move || {
+            let result = match undo.action {
+                Move::Archive => gmail.modify_labels(&undo.gmail_id, &["INBOX"], &[]),
+                Move::Trash => gmail.untrash(&undo.gmail_id),
+            };
+            Event::Undone { session: id, result: result.map_err(|e| e.to_string()) }
+        });
+    }
+
     pub fn discard_compose(&mut self) {
         if let Some(session) = self.session_mut() {
             session.compose = None;
@@ -469,6 +525,22 @@ impl App {
             }
             Key::Text(t) if plain && t == "/" => {
                 tx.focus("search", true);
+                return true;
+            }
+            Key::Text(t) if plain && t == "e" => {
+                self.move_message(Move::Archive);
+                return true;
+            }
+            Key::Text(t) if plain && t == "#" => {
+                self.move_message(Move::Trash);
+                return true;
+            }
+            Key::Delete | Key::Backspace if plain => {
+                self.move_message(Move::Trash);
+                return true;
+            }
+            Key::Text(t) if plain && t == "z" => {
+                self.undo();
                 return true;
             }
             Key::Text(t) if reading && plain && (t == "r" || t == "f") => {
@@ -806,5 +878,60 @@ mod tests {
         session.clear_search();
         assert_eq!(session.visible().len(), 3, "the mailbox is back");
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    fn visible_ids(session: &Session) -> Vec<&str> {
+        session.visible().iter().map(|m| m.gmail_id.as_str()).collect()
+    }
+
+    #[test]
+    fn archiving_takes_a_message_out_of_the_inbox_and_selects_the_next() {
+        let mut session = session_with(4);
+        session.selected = Some("m0001".into());
+        assert_eq!(session.move_message(Move::Archive).as_deref(), Some("m0001"));
+        assert_eq!(visible_ids(&session), ["m0000", "m0002", "m0003"]);
+        assert_eq!(session.selected.as_deref(), Some("m0002"), "the next message takes its place");
+        assert_eq!(session.notice.as_deref(), Some("Archived"));
+        // Archived again: it's no longer in the inbox, so nothing happens.
+        session.selected = Some("m0001".into());
+        assert_eq!(session.move_message(Move::Archive), None);
+    }
+
+    #[test]
+    fn undo_puts_a_trashed_message_back_with_its_labels() {
+        let mut session = session_with(3);
+        session.selected = Some("m0002".into());
+        session.move_message(Move::Trash);
+        assert_eq!(visible_ids(&session), ["m0000", "m0001"]);
+        session.select("TRASH");
+        assert_eq!(visible_ids(&session), ["m0002"]);
+        session.select("INBOX");
+
+        let undo = session.undo_move().unwrap();
+        assert_eq!((undo.gmail_id.as_str(), undo.action), ("m0002", Move::Trash));
+        assert_eq!(visible_ids(&session), ["m0000", "m0001", "m0002"]);
+        assert_eq!(session.selected.as_deref(), Some("m0002"));
+        assert!(session.undo_move().is_none(), "one undo per move");
+    }
+
+    #[test]
+    fn a_refused_move_brings_the_message_back() {
+        let mut session = session_with(2);
+        session.selected = Some("m0000".into());
+        session.move_message(Move::Trash);
+        let previous = vec!["INBOX".to_string()];
+        session.move_failed("m0000", &previous, "offline".into());
+        assert_eq!(visible_ids(&session), ["m0000", "m0001"]);
+        assert!(session.error.as_deref().is_some_and(|e| e.contains("offline")));
+        assert!(session.last_move.is_none());
+    }
+
+    #[test]
+    fn the_open_message_is_the_one_moved() {
+        let mut session = session_with(3);
+        session.open_message("m0001");
+        session.move_message(Move::Archive);
+        assert!(session.reading.is_none(), "back to the list");
+        assert_eq!(visible_ids(&session), ["m0000", "m0002"]);
     }
 }

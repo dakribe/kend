@@ -234,3 +234,22 @@ fn the_newest_messages_without_bodies_are_listed_newest_first() {
     assert_eq!(store.bodies_missing(a, "INBOX", 10).unwrap(), ["m1"]);
     assert_eq!(ids(&store.search(a, "hello", 10).unwrap()), ["m2"], "prefetched bodies are searchable");
 }
+
+#[test]
+fn trash_and_spam_show_only_in_their_own_mailboxes() {
+    let (mut store, a) = store();
+    let mut trashed = msg("trashed", 2, &["INBOX", "TRASH", "UNREAD"]);
+    trashed.subject = "findme".into();
+    store
+        .upsert_messages(a, &[msg("kept", 1, &["INBOX", "UNREAD"]), trashed, msg("junk", 3, &["INBOX", "SPAM"])])
+        .unwrap();
+
+    assert_eq!(ids(&store.list(a, "INBOX", None, 10).unwrap()), ["kept"]);
+    assert_eq!(ids(&store.list(a, "TRASH", None, 10).unwrap()), ["trashed"]);
+    assert_eq!(ids(&store.list(a, "SPAM", None, 10).unwrap()), ["junk"]);
+    assert_eq!(store.count(a, "INBOX").unwrap(), 1);
+    assert_eq!(store.count(a, "TRASH").unwrap(), 1);
+    let unread = store.unread_counts(a).unwrap();
+    assert_eq!((unread.get("INBOX"), unread.get("TRASH")), (Some(&1), Some(&1)));
+    assert!(store.search(a, "findme", 10).unwrap().is_empty(), "search skips the trash");
+}

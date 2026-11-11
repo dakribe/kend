@@ -9,8 +9,8 @@ use crate::compose::compose_view;
 use crate::message_list::message_list;
 use crate::reading::reading_view;
 use crate::samples::{self, sample_inbox};
-use crate::session::{Session, SyncStatus};
-use crate::sidebar::{mailbox_name, sidebar, sync_status};
+use crate::session::{Move, Session, SyncStatus};
+use crate::sidebar::{mailbox_name, sidebar};
 
 type Scene = (&'static str, fn(&mut App));
 
@@ -154,27 +154,17 @@ fn mail(
     .font(k.ty.ui)
     .color(k.c.text_muted);
     let composing = session.compose.is_some();
-    let reading = session.reading.as_ref().filter(|_| !composing);
-    let ghost = |label: &str, help: &str, key: &str, press: fn(&mut App)| {
-        Button::new(label)
-            .variant(ButtonVariant::Ghost)
-            .help(help)
-            .on_press_tx(instant(press))
-            .build(k)
-            .key(key.to_string())
-    };
-    let mut toolbar = Toolbar::new();
-    if reading.is_some() {
-        toolbar = toolbar.leading(ghost("Back", "Back to the list (Esc)", "back", |s| s.close_message()));
-    }
-    toolbar = toolbar.leading(row().gap(10.0).items_center().child(title).child(counts));
+    let reading = session.reading.is_some();
+    // The toolbar holds where you are, search and New Message. Message actions live in the
+    // open message's own bar, and account actions at the foot of the sidebar.
+    let mut toolbar = Toolbar::new().leading(row().gap(10.0).items_center().child(title).child(counts));
     if !composing {
         let search = TextInput::new(&session.search)
             .placeholder("Search mail  ⌘F")
             .label("Search mail")
             .leading_icon(k.glyph.search)
             .clear_button()
-            .width(Some(300.0))
+            .width(Some(260.0))
             .on_edit(|s: &mut App| s.search_field())
             .on_change(|s: &mut App, tx: &mut rune::Tx| {
                 tx.instant();
@@ -184,35 +174,19 @@ fn mail(
             .build(k)
             .key("search");
         toolbar = toolbar.center(search);
-    }
-    if let Some(notice) = &session.notice {
-        toolbar = toolbar.trailing(text(notice).key("notice").font(k.ty.ui).color(k.c.text_muted));
-    }
-    if let Some(reading) = reading {
-        toolbar = toolbar.trailing(ghost("Reply", "Reply (R)", "reply", |s| s.reply(false))).trailing(ghost(
-            "Forward",
-            "Forward (F)",
-            "forward",
-            |s| s.reply(true),
-        ));
-        if reading.message.body_html.is_some() {
-            toolbar = toolbar.trailing(ghost(
-                "Open in Browser",
-                "See this email exactly as designed",
-                "open-in-browser",
-                |s| s.open_in_browser(),
-            ));
+        if !reading && session.target().is_some() {
+            toolbar = toolbar
+                .trailing(ghost(k, "Archive", "Archive (E)", "archive", |s| s.move_message(Move::Archive)))
+                .trailing(ghost(k, "Delete", "Move to Trash (#)", "delete", |s| s.move_message(Move::Trash)));
         }
+        toolbar = toolbar.trailing(ghost(k, "New Message", "New message (⌘N)", "new-message", |s| s.compose_new()));
     }
-    if !composing {
-        toolbar = toolbar.trailing(ghost("New Message", "New message (⌘N)", "new-message", |s| s.compose_new()));
-    }
-    let toolbar = toolbar
-        .trailing(ghost("Sync now", &sync_status(session), "sync-now", |s| s.sync_now()))
-        .trailing(ghost("Sign out", &format!("Signed in as {}", account.email), "sign-out", |s| s.sign_out()));
     let mut main = col().w_full().h_full().min_h(0.0);
     if let Some(error) = &session.error {
         main = main.child(sync_error(k, error));
+    }
+    if let Some(notice) = &session.notice {
+        main = main.child(notice_strip(k, notice, session.last_move.is_some()));
     }
     let content = match (&session.compose, &session.reading) {
         (Some(compose), _) => compose_view(k, compose),
@@ -230,6 +204,34 @@ fn mail(
         .sidebar_toggle(SidebarToggle::new().size(ControlSize::Large).past_lights(16.0).edge(18.0).gap(4.0).in_header())
         .reduced_motion(reduced_motion)
         .build(k)
+}
+
+/// A borderless button whose action lands at once.
+pub fn ghost(k: &Kit, label: &str, help: &str, key: &str, press: fn(&mut App)) -> El {
+    Button::new(label)
+        .variant(ButtonVariant::Ghost)
+        .help(help)
+        .on_press_tx(instant(press))
+        .build(k)
+        .key(key.to_string())
+}
+
+/// A quiet line above the list: "Archived", with Undo when the last move can be undone.
+fn notice_strip(k: &Kit, notice: &str, undo: bool) -> El {
+    let mut strip = row()
+        .key("notice-strip")
+        .w_full()
+        .px(16.0)
+        .py(4.0)
+        .gap(8.0)
+        .items_center()
+        .fill(k.c.layer_01)
+        .radius(k.radius.md)
+        .child(text(notice).key("notice").font(k.ty.ui).color(k.c.text_muted));
+    if undo {
+        strip = strip.child(ghost(k, "Undo", "Undo (Z)", "undo", |s| s.undo()));
+    }
+    strip
 }
 
 /// A failed sync, in full, until a sync succeeds. kend retries on its own; the button is for
@@ -466,6 +468,11 @@ mod tests {
         lands_in_one_frame(&mut rt, "opening to reply", |rt| click(rt, "sample-0"));
         lands_in_one_frame(&mut rt, "Reply", |rt| click(rt, "reply"));
         lands_in_one_frame(&mut rt, "discarding the reply", |rt| click(rt, "discard"));
+        lands_in_one_frame(&mut rt, "selecting", |rt| key(rt, rune::Key::Text("j".into()), plain));
+        lands_in_one_frame(&mut rt, "archiving", |rt| key(rt, rune::Key::Text("e".into()), plain));
+        lands_in_one_frame(&mut rt, "deleting", |rt| key(rt, rune::Key::Text("#".into()), plain));
+        lands_in_one_frame(&mut rt, "undoing", |rt| key(rt, rune::Key::Text("z".into()), plain));
+        lands_in_one_frame(&mut rt, "Delete button", |rt| click(rt, "delete"));
         lands_in_one_frame(&mut rt, "focusing search", |rt| click(rt, "search"));
         lands_in_one_frame(&mut rt, "typing a search", |rt| key(rt, rune::Key::Text("w".into()), plain));
         lands_in_one_frame(&mut rt, "clearing the search", |rt| key(rt, rune::Key::Escape, plain));
@@ -528,6 +535,21 @@ mod tests {
         type_text(&mut rt, "zebra");
         let empty = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("empty")).and_then(|e| e.text);
         assert_eq!(empty.as_deref(), Some("No messages match “zebra”."));
+    }
+
+    #[test]
+    fn e_archives_the_selected_message_and_z_brings_it_back() {
+        let mut rt = render("inbox");
+        let plain = rune::Mods::default();
+        key(&mut rt, rune::Key::Text("j".into()), plain);
+        rt.frame(1.0 / 60.0);
+        key(&mut rt, rune::Key::Text("e".into()), plain);
+        rt.frame(1.0 / 60.0);
+        assert!(rt.find("sample-0").is_none(), "archived out of the inbox");
+        assert!(rt.find("undo").is_some());
+        key(&mut rt, rune::Key::Text("z".into()), plain);
+        rt.frame(1.0 / 60.0);
+        assert!(rt.find("sample-0").is_some(), "back after undo");
     }
 
     #[test]

@@ -7,13 +7,35 @@ use rune_kit::{Button, ButtonVariant, Kit, Markdown};
 use crate::app::App;
 use crate::app::instant;
 use crate::dates;
-use crate::session::{BodyState, Reading};
+use crate::session::{BodyState, Move, Reading};
+use crate::view::ghost;
 
 const SUBJECT: TextStyle = TextStyle::new(20.0, 600.0).lh(27.0);
 /// A little larger than the UI text and generously spaced: this is for reading.
 const BODY: TextStyle = TextStyle::new(14.0, 400.0).lh(22.0);
 /// Lines longer than this are hard to read; wide windows centre the column.
 const MEASURE: f32 = 720.0;
+
+/// What you can do with the open message.
+fn actions(k: &Kit, has_html: bool) -> El {
+    let mut bar = row()
+        .key("reading-actions")
+        .w_full()
+        .gap(4.0)
+        .items_center()
+        .child(ghost(k, "Back", "Back to the list (Esc)", "back", |s| s.close_message()))
+        .child(el().grow(1.0))
+        .child(ghost(k, "Reply", "Reply (R)", "reply", |s| s.reply(false)))
+        .child(ghost(k, "Forward", "Forward (F)", "forward", |s| s.reply(true)))
+        .child(ghost(k, "Archive", "Archive (E)", "archive", |s| s.move_message(Move::Archive)))
+        .child(ghost(k, "Delete", "Move to Trash (#)", "delete", |s| s.move_message(Move::Trash)));
+    if has_html {
+        bar = bar.child(ghost(k, "Open in Browser", "See this email exactly as designed", "open-in-browser", |s| {
+            s.open_in_browser()
+        }));
+    }
+    bar
+}
 
 pub fn reading_view(k: &Kit, dark: bool, reading: &Reading) -> El {
     let m = &reading.message;
@@ -89,9 +111,10 @@ pub fn reading_view(k: &Kit, dark: bool, reading: &Reading) -> El {
         .w_full()
         .max_w(MEASURE)
         .px(32.0)
-        .pt(24.0)
+        .pt(12.0)
         .pb(48.0)
         .gap(20.0)
+        .child(actions(k, m.body_html.is_some()))
         .child(header)
         .child(el().w_full().h(1.0).fill(k.c.border_muted))
         .child(body);

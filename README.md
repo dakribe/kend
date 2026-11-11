@@ -28,9 +28,12 @@ everything you've already loaded works offline. The UI is native and GPU-rendere
 - **Search as you type** across all your mail (subjects, senders, previews and prefetched
   bodies) with SQLite FTS5. Queries run on a background worker with their own database
   connection, and only the newest query's results show, so typing never waits.
+- **Archive and delete** (E, #) with Undo (Z). The change shows at once and is sent to Gmail
+  in the background; if Gmail refuses, the message comes back with the reason. Delete moves
+  mail to Trash, which Gmail empties after 30 days.
 - **Compose, reply and forward**, with replies kept in their Gmail conversation.
 - **Keyboard first**: J/K or arrows to move, Return to open, Esc to go back, ⌘F or / to
-  search, R to reply, F to forward, ⌘N for a new message, ⌘Return to send.
+  search, E to archive, # to delete, Z to undo, R to reply, F to forward, ⌘N for a new message, ⌘Return to send.
 - **Instant actions.** Nothing animates except loading indicators: opening a message, moving
   the selection, switching mailboxes and toggling the sidebar all land in the frame they
   happen, and a test checks it for each action.
@@ -45,7 +48,7 @@ All numbers were measured on Apple silicon and can be reproduced with the comman
 
 | Operation | Time |
 |---|---|
-| Inbox page, 50 rows (first page or halfway down) | 0.05 ms |
+| Inbox page, 50 rows (first page or halfway down) | 0.08 ms |
 | Full-text search, typical word | 0.1 ms |
 | Full-text search, word in 40% of all mail (worst case) | 26 ms |
 | Opening a message (body prefetched) | 0.007 ms |
@@ -128,7 +131,7 @@ Requires Rust. The version is pinned in `rust-toolchain.toml`.
 
 ```sh
 cargo run -p kend                      # open the app
-cargo test                             # 108 tests across the workspace
+cargo test                             # 114 tests across the workspace
 cargo run --release -p kend-store --example bench
 
 # Render a screen without a window, from built-in sample data (no account needed)

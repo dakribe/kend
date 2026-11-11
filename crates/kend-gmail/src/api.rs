@@ -286,6 +286,16 @@ impl Gmail {
         Ok((message.header("Message-ID").map(str::to_string), message.header("References").map(str::to_string)))
     }
 
+    /// Moves a message to Trash. Gmail deletes it for good after 30 days; until then
+    /// [`Gmail::untrash`] restores it with its labels.
+    pub fn trash(&self, id: &str) -> Result<()> {
+        self.post::<serde_json::Value>(&format!("/messages/{id}/trash"), &serde_json::json!({}), 5).map(|_| ())
+    }
+
+    pub fn untrash(&self, id: &str) -> Result<()> {
+        self.post::<serde_json::Value>(&format!("/messages/{id}/untrash"), &serde_json::json!({}), 5).map(|_| ())
+    }
+
     /// Adds and removes labels on a message (`UNREAD` to mark it unread or read).
     pub fn modify_labels(&self, id: &str, add: &[&str], remove: &[&str]) -> Result<()> {
         let body = serde_json::json!({ "addLabelIds": add, "removeLabelIds": remove });

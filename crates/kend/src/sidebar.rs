@@ -1,12 +1,13 @@
 //! The sidebar: Gmail's mailboxes, the user's labels with unread counts, and the account.
 
-use rune::{El, Icon};
+use rune::{El, Icon, col, row};
 use rune_kit::shell::{Sidebar, SidebarRow, SidebarSection};
 use rune_kit::{Kit, glyphs};
 
 use crate::app::App;
 use crate::icons;
 use crate::session::{Session, SyncStatus};
+use crate::view::ghost;
 
 pub struct Mailbox {
     pub id: &'static str,
@@ -60,7 +61,15 @@ pub fn sidebar(k: &Kit, email: &str, session: &Session) -> El {
         );
     }
     let account = SidebarRow::new(email).subtitle(sync_status(session)).height(45.0).select_only();
-    sidebar.footer(account.build(k).key("account")).build(k)
+    let controls = row()
+        .gap(4.0)
+        .px(4.0)
+        .child(ghost(k, "Sync now", "Check for new mail now", "sync-now", |s| s.sync_now()))
+        .child(ghost(k, "Sign out", "Sign out and remove this account's mail from this Mac", "sign-out", |s| {
+            s.sign_out()
+        }));
+    let footer = col().w_full().gap(2.0).child(account.build(k).key("account")).child(controls);
+    sidebar.footer(footer).build(k)
 }
 
 fn finish(row: SidebarRow, id: &str, session: &Session, k: &Kit) -> El {

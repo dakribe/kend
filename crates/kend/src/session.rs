@@ -48,9 +48,26 @@ pub struct Session {
     pub compose: Option<Compose>,
     /// A passing confirmation ("Message sent"), cleared by the next thing the user does.
     pub notice: Option<String>,
+    /// The last archive or delete, for Undo.
+    pub last_move: Option<Undo>,
     worker: Option<SyncWorker>,
     /// The Gmail client sync uses too, for fetching bodies and marking messages read.
     pub gmail: Option<Arc<Gmail>>,
+}
+
+/// Taking a message out of the inbox, or moving it to Trash.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Move {
+    Archive,
+    Trash,
+}
+
+/// What Undo needs: the message and the labels it had before.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Undo {
+    pub gmail_id: String,
+    pub previous: Vec<String>,
+    pub action: Move,
 }
 
 struct Searches {
@@ -130,6 +147,7 @@ impl Session {
             reading: None,
             compose: None,
             notice: None,
+            last_move: None,
             worker,
             gmail,
         };
@@ -271,6 +289,7 @@ impl Session {
     /// Opens a message: shown at once from the store, marked read locally straight away.
     pub fn open_message(&mut self, gmail_id: &str) -> Opened {
         self.notice = None;
+        self.last_move = None;
         let Ok(Some(id)) = self.store.find(self.account, gmail_id) else { return Opened::default() };
         let Ok(Some(message)) = self.store.message(id) else { return Opened::default() };
         let mark_read = message.summary.unread && self.store.set_unread(self.account, gmail_id, false).unwrap_or(false);
@@ -322,6 +341,72 @@ impl Session {
             Ok(None) => reading.body = BodyState::Failed("This message is no longer stored.".into()),
             Err(err) => reading.body = BodyState::Failed(err),
         }
+    }
+
+    /// The message an action applies to: the open one, else the selected row.
+    pub fn target(&self) -> Option<&str> {
+        self.reading.as_ref().map(|r| r.message.summary.gmail_id.as_str()).or(self.selected.as_deref())
+    }
+
+    /// Archives or trashes the target locally, at once. The selection moves to the row that
+    /// takes its place, so the next key acts on the next message. Returns the message's Gmail
+    /// id when something changed; the caller tells Gmail.
+    pub fn move_message(&mut self, action: Move) -> Option<String> {
+        let gmail_id = self.target()?.to_string();
+        let id = self.store.find(self.account, &gmail_id).ok()??;
+        let previous = self.store.message(id).ok()??.label_ids;
+        let mut labels = previous.clone();
+        match action {
+            Move::Archive => labels.retain(|l| l != "INBOX"),
+            Move::Trash if !labels.iter().any(|l| l == "TRASH") => labels.push("TRASH".into()),
+            Move::Trash => {}
+        }
+        if labels == previous {
+            return None;
+        }
+        let index = self.visible().iter().position(|m| m.gmail_id == gmail_id);
+        self.store.set_labels(self.account, &gmail_id, &labels).ok()?;
+        if action == Move::Trash
+            && let Some(results) = &mut self.results
+        {
+            // Search covers all mail, so only a trashed message leaves the results.
+            results.retain(|m| m.gmail_id != gmail_id);
+        }
+        self.reading = None;
+        self.reload();
+        let visible = self.visible();
+        self.selected =
+            index.and_then(|i| visible.get(i.min(visible.len().checked_sub(1)?))).map(|m| m.gmail_id.clone());
+        self.notice = Some(match action {
+            Move::Archive => "Archived".into(),
+            Move::Trash => "Moved to Trash".into(),
+        });
+        self.last_move = Some(Undo { gmail_id: gmail_id.clone(), previous, action });
+        Some(gmail_id)
+    }
+
+    /// Puts the last moved message back as it was, locally. Returns what to undo in Gmail.
+    pub fn undo_move(&mut self) -> Option<Undo> {
+        let undo = self.last_move.take()?;
+        self.store.set_labels(self.account, &undo.gmail_id, &undo.previous).ok()?;
+        self.notice = None;
+        if self.results.is_some() {
+            self.search_changed();
+        }
+        self.reload();
+        self.selected = Some(undo.gmail_id.clone());
+        Some(undo)
+    }
+
+    /// Gmail refused a move: put the message back and say why.
+    pub fn move_failed(&mut self, gmail_id: &str, previous: &[String], error: String) {
+        let _ = self.store.set_labels(self.account, gmail_id, previous);
+        if self.last_move.as_ref().is_some_and(|u| u.gmail_id == gmail_id) {
+            self.last_move = None;
+            self.notice = None;
+        }
+        self.error = Some(format!("Couldn't move the message: {error}"));
+        self.reload();
     }
 
     /// Gmail didn't take the read mark: show the message as unread again, and why.
