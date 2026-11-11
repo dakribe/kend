@@ -7,6 +7,16 @@ use crate::app::Auth;
 use crate::session::{Session, SyncStatus};
 
 const SENDERS: [&str; 8] = ["Ana Lima", "Bo Chen", "GitHub", "Priya Nair", "Linear", "Sam Ortiz", "Stripe", "Mei Tan"];
+const SNIPPETS: [&str; 8] = [
+    "Notes from today: we agreed to ship the sidebar first and revisit search next week",
+    "Thanks for your payment. Here's a summary of what you were charged this month",
+    "I left a few comments on the spacing in the header. Otherwise it looks great",
+    "The build broke on the latest commit. 3 tests failed in the store crate",
+    "Your trip is confirmed. Check in opens 24 hours before departure",
+    "Before I sign, can you confirm the start date in section 4?",
+    "Uploaded the album, the sunset ones came out really well",
+    "This is a reminder that your invoice is due in 5 days",
+];
 const SUBJECTS: [&str; 8] = [
     "Weekly sync notes",
     "Your receipt from Stripe",
@@ -43,8 +53,8 @@ fn generated(i: usize) -> NewMessage {
     NewMessage {
         gmail_id: format!("gen-{i:05}"),
         from: Address::new(SENDERS[i % SENDERS.len()], "someone@example.com"),
-        subject: format!("{} ({})", SUBJECTS[(i / 3) % SUBJECTS.len()], i),
-        snippet: "Here is a longer preview line so the row has to truncate text like real mail does".into(),
+        subject: SUBJECTS[(i * 5 + i / 8) % SUBJECTS.len()].into(),
+        snippet: SNIPPETS[(i * 5 + i / 8) % SNIPPETS.len()].into(),
         // Hours apart, reaching back months, so every date format shows up.
         received_at: now_ms() - (i as i64 + 4) * 97 * 60_000,
         label_ids: if unread { vec!["INBOX".into(), "UNREAD".into()] } else { vec!["INBOX".into()] },
