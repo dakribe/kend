@@ -10,6 +10,8 @@ version = "0.1.0"
 [workspace.dependencies]
 # Rune is pre-release: pin a rev of its `dev` branch, which is never rewritten.
 rune = { git = "https://github.com/anomalyco/rune", rev = "0ea75abef0a6caa014067a88f89518b9a04cce2b" }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "0ea75abef0a6caa014067a88f89518b9a04cce2b" }
+kend-gmail = { path = "crates/kend-gmail" }
 
 # Line tables keep backtraces readable without the memory cost of full debug info.
 [profile.dev]
