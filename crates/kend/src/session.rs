@@ -398,6 +398,18 @@ impl Session {
         self.selected.as_deref()
     }
 
+    /// Selects the first row, or the last one (loading every remaining page) when `last`.
+    /// Returns the newly selected message's id.
+    pub fn select_edge(&mut self, last: bool) -> Option<&str> {
+        if last {
+            while self.load_more(self.rows.len()) {}
+        }
+        let visible = self.visible();
+        let edge = if last { visible.last() } else { visible.first() }?;
+        self.selected = Some(edge.gmail_id.clone());
+        self.selected.as_deref()
+    }
+
     /// Checks or unchecks one message, and starts the next Shift-click range there.
     pub fn toggle_checked(&mut self, gmail_id: &str) {
         self.notice = None;

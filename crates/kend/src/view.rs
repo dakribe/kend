@@ -119,6 +119,8 @@ const SHORTCUTS: &[(&str, &[Shortcut])] = &[
         &[
             (&["J", "↓"], "Next message"),
             (&["K", "↑"], "Previous message"),
+            (&["G G"], "First message"),
+            (&["⇧G"], "Last message"),
             (&["Return"], "Open message"),
             (&["Esc"], "Back to the list, or clear the selection"),
             (&["⌘F", "/"], "Search"),

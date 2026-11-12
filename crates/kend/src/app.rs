@@ -29,6 +29,8 @@ pub struct App {
     pub confirm_sign_out: bool,
     /// The command palette (⌘K).
     pub palette: Palette,
+    /// A G was just pressed: another G goes to the top of the list (as in Vim).
+    pending_g: bool,
     client: Option<ClientCredentials>,
     sender: Sender<Event>,
     events: Receiver<Event>,
@@ -125,6 +127,7 @@ impl App {
             events,
             waker: None,
             next_attempt: 0,
+            pending_g: false,
         }
     }
 
@@ -620,12 +623,14 @@ impl App {
     }
 
     /// Window-wide shortcuts: ⇧⌘B shows and hides the sidebar; J/K and the arrows move
-    /// through messages, Return opens one and Escape goes back to the list. While a message
+    /// through messages, GG and ⇧G go to the first and last, Return opens one and Escape goes back to the list. While a message
     /// is open, J/K open the next and previous one.
     pub fn on_key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
         // Keys land at once: no glide when the list follows the selection.
         tx.instant();
         let plain = !(event.mods.cmd || event.mods.ctrl || event.mods.alt);
+        // Any key but a second G ends a pending one.
+        let pending_g = std::mem::take(&mut self.pending_g);
         if event.is_command('k') {
             if self.palette.open {
                 self.close_palette();
@@ -674,6 +679,22 @@ impl App {
         }
         let reading = session.reading.is_some();
         let shift = event.mods.shift;
+        // Vim's gg and G: the first and last message.
+        if let Key::Text(t) = &event.key
+            && plain
+            && (t == "g" || t == "G")
+        {
+            if t == "g" && !pending_g {
+                self.pending_g = true;
+                return true;
+            }
+            let Some(edge) = session.select_edge(t == "G").map(str::to_string) else { return false };
+            if reading {
+                self.open_message(&edge);
+            }
+            tx.scroll_into_view(edge);
+            return true;
+        }
         if let Key::Text(t) = &event.key
             && plain
             && t == "?"
@@ -1087,6 +1108,20 @@ mod tests {
         press(&mut app, Key::Escape);
         assert_eq!(reading(&app), None);
         assert_eq!(app.session().unwrap().selected.as_deref(), Some("m0001"), "back on the list, at the same message");
+    }
+
+    #[test]
+    fn gg_goes_to_the_first_message_and_shift_g_to_the_last() {
+        let mut app = App::with_client(None);
+        signed_in_with(&mut app, 450, false);
+        press(&mut app, Key::Text("G".into()));
+        assert_eq!(app.session().unwrap().selected.as_deref(), Some("m0449"), "G loads every page");
+        press(&mut app, Key::Text("g".into()));
+        press(&mut app, Key::Text("j".into()));
+        press(&mut app, Key::Text("g".into()));
+        assert_eq!(app.session().unwrap().selected.as_deref(), Some("m0449"), "a lone g does nothing");
+        press(&mut app, Key::Text("g".into()));
+        assert_eq!(app.session().unwrap().selected.as_deref(), Some("m0000"));
     }
 
     #[test]
