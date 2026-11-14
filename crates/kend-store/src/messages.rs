@@ -14,7 +14,7 @@ pub(crate) fn visible_outside_trash(id: &str) -> String {
 }
 
 /// The columns [`summary_from_row`] reads, in order, from `messages m`.
-pub(crate) const SUMMARY_COLUMNS: &str = "m.id, m.gmail_id, m.thread_id, m.from_name, m.from_email, m.subject, m.snippet, m.received_at, m.unread, m.starred";
+pub(crate) const SUMMARY_COLUMNS: &str = "m.id, m.gmail_id, m.thread_id, m.from_name, m.from_email, m.subject, m.snippet, m.received_at, m.unread, m.starred, m.account_id";
 
 pub(crate) fn summary_from_row(r: &Row<'_>) -> rusqlite::Result<MessageSummary> {
     Ok(MessageSummary {
@@ -27,6 +27,7 @@ pub(crate) fn summary_from_row(r: &Row<'_>) -> rusqlite::Result<MessageSummary> 
         received_at: r.get(7)?,
         unread: r.get(8)?,
         starred: r.get(9)?,
+        account: AccountId(r.get(10)?),
     })
 }
 
@@ -310,9 +311,9 @@ impl Store {
             .query_row([id.0], |r| {
                 Ok(Message {
                     summary: summary_from_row(r)?,
-                    to: r.get(10)?,
-                    body_text: r.get(11)?,
-                    body_html: r.get(12)?,
+                    to: r.get(11)?,
+                    body_text: r.get(12)?,
+                    body_html: r.get(13)?,
                     label_ids: Vec::new(),
                 })
             })
@@ -393,4 +394,4 @@ fn write_labels(
 
 #[cfg(test)]
 #[path = "messages_tests.rs"]
-mod tests;
+pub(crate) mod tests;

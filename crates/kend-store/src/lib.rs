@@ -7,6 +7,7 @@
 //! - Opens are counted per message, for frecency ranking later.
 
 mod accounts;
+mod combined;
 mod messages;
 mod model;
 mod schema;

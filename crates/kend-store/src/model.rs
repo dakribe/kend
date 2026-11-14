@@ -60,6 +60,8 @@ pub struct NewMessage {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MessageSummary {
     pub id: MessageId,
+    /// The account the message belongs to, for telling Gmail about changes to it.
+    pub account: AccountId,
     pub gmail_id: String,
     pub thread_id: String,
     pub from: Address,
