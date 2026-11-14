@@ -75,12 +75,14 @@ impl CancelToken {
     }
 }
 
-/// The account saved by an earlier sign-in, if any. Reads the Keychain only; no network.
-pub fn saved_account() -> Result<Option<Account>> {
+/// The accounts saved by earlier sign-ins, in the order they were added. Reads the Keychain
+/// only; no network.
+pub fn saved_accounts() -> Result<Vec<Account>> {
     keychain::load()
 }
 
-/// Runs the whole browser sign-in and saves the account to the Keychain. Blocks until the
+/// Runs the whole browser sign-in and adds the account to the Keychain (or renews it, when it
+/// was saved already). Blocks until the
 /// user finishes, cancels or times out, so call it off the UI thread.
 pub fn sign_in(client: &ClientCredentials, cancel: &CancelToken) -> Result<Account> {
     let loopback = Loopback::bind()?;
@@ -110,10 +112,10 @@ pub fn access_token(client: &ClientCredentials, account: &Account) -> Result<Acc
     Ok(AccessToken::from_response(&oauth::refresh(client, &account.refresh_token)?))
 }
 
-/// Forgets the account locally, then asks Google to revoke its token. The local sign-out
-/// stands even if revocation fails (offline, say).
+/// Forgets the account locally, then asks Google to revoke its token. Other accounts stay
+/// signed in. The local sign-out stands even if revocation fails (offline, say).
 pub fn sign_out(account: &Account) -> Result<()> {
-    keychain::delete()?;
+    keychain::delete(&account.email)?;
     oauth::revoke(&account.refresh_token)
 }
 

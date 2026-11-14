@@ -135,7 +135,8 @@ impl App {
     pub fn setup(&mut self, waker: Waker) {
         self.waker = Some(waker);
         if matches!(self.auth, Auth::Loading) {
-            self.spawn("keychain", || Event::Loaded(kend_gmail::saved_account()));
+            // One account for now; the app shows several in the next step.
+            self.spawn("keychain", || Event::Loaded(kend_gmail::saved_accounts().map(|a| a.into_iter().next())));
         }
     }
 
