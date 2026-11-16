@@ -73,14 +73,14 @@ impl Drop for SyncWorker {
 }
 
 fn run(spec: Spec, commands: Receiver<Command>) {
+    let email = spec.gmail.account().email.clone();
     let send = |update: SyncUpdate| {
-        if spec.events.send(Event::Sync { session: spec.session, update }).is_ok()
+        if spec.events.send(Event::Sync { session: spec.session, email: email.clone(), update }).is_ok()
             && let Some(wake) = &spec.waker
         {
             wake();
         }
     };
-    let email = spec.gmail.account().email.clone();
     let opened = Store::open(&spec.db_path).and_then(|store| Ok((store.upsert_account(&email)?, store)));
     let (account_id, mut store) = match opened {
         Ok(opened) => opened,

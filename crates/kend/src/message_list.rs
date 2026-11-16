@@ -19,7 +19,7 @@ const ROW_HEIGHT: f32 = 40.0;
 
 pub fn message_list(k: &Kit, dark: bool, session: &Session) -> El {
     if session.visible().is_empty() {
-        let note = match (&session.results, &session.sync) {
+        let note = match (&session.results, session.sync_status()) {
             (Some(_), _) => format!("No messages match “{}”.", session.query()),
             (None, SyncStatus::Syncing { .. }) => "Loading your mail…".into(),
             (None, _) => "Nothing here.".into(),
@@ -32,6 +32,8 @@ pub fn message_list(k: &Kit, dark: bool, session: &Session) -> El {
     let mut check_kit = k.clone();
     check_kit.c.border_weak = k.c.text_faint;
     let now = Zoned::now();
+    // With several accounts' mail together, each row says which account it came to.
+    let combined = session.combined();
     let rows = col()
         .key("message-rows")
         .w_full()
@@ -47,9 +49,10 @@ pub fn message_list(k: &Kit, dark: bool, session: &Session) -> El {
                 let selected = session.selected.as_deref() == Some(m.gmail_id.as_str());
                 let checked = session.checked.contains(&m.gmail_id);
                 let date = dates::label(m.received_at, &now);
+                let account = combined.then(|| session.linked(m.account).map(|a| a.email.as_str())).flatten();
                 // Rebuilt only when what the row shows changes.
-                memo(m.gmail_id.as_str(), (m, selected, checked, &date, dark), || {
-                    message_row(&kit, &check_kit, m, selected, checked, &date)
+                memo(m.gmail_id.as_str(), (m, selected, checked, &date, account, dark), || {
+                    message_row(&kit, &check_kit, m, selected, checked, &date, account)
                 })
             },
         )
@@ -86,7 +89,15 @@ fn star(k: &Kit, m: &MessageSummary) -> El {
         })
 }
 
-fn message_row(k: &Kit, check_kit: &Kit, m: &MessageSummary, selected: bool, checked: bool, date: &str) -> El {
+fn message_row(
+    k: &Kit,
+    check_kit: &Kit,
+    m: &MessageSummary,
+    selected: bool,
+    checked: bool,
+    date: &str,
+    account: Option<&str>,
+) -> El {
     let (weight, ink) = if m.unread { (k.ty.ui_medium, k.c.text_base) } else { (k.ty.ui, k.c.text_muted) };
     let mut dot = el().size(8.0, 8.0).radius(4.0);
     if m.unread {
@@ -136,9 +147,13 @@ fn message_row(k: &Kit, check_kit: &Kit, m: &MessageSummary, selected: bool, che
         .child(checkbox)
         .child(dot)
         .child(from)
-        .child(line)
-        .child(star(k, m))
-        .child(date);
+        .child(line);
+    if let Some(account) = account {
+        r = r.child(
+            text(account).key("row-account").font(k.ty.small).color(k.c.text_faint).truncate().max_w(140.0).shrink(),
+        );
+    }
+    r = r.child(star(k, m)).child(date);
     if checked {
         r = r.fill(k.c.layer_03);
     } else if selected {

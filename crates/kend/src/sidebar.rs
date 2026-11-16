@@ -1,4 +1,5 @@
-//! The sidebar: Gmail's mailboxes, the user's labels with unread counts, and the account.
+//! The sidebar: the accounts, Gmail's mailboxes, the user's labels with unread counts, and
+//! sync.
 
 use rune::{El, Icon, col, row};
 use rune_kit::shell::{Sidebar, SidebarRow, SidebarSection};
@@ -29,14 +30,18 @@ pub const MAILBOXES: [Mailbox; 7] = [
 
 /// What the toolbar calls the selected mailbox.
 pub fn mailbox_name(session: &Session) -> &str {
+    if session.mailbox == "INBOX" && session.combined() {
+        return "All Inboxes";
+    }
     if let Some(m) = MAILBOXES.iter().find(|m| m.id == session.mailbox) {
         return m.name;
     }
     session.labels.iter().find(|l| l.id == session.mailbox).map_or("", |l| leaf(&l.name))
 }
 
-pub fn sidebar(k: &Kit, email: &str, session: &Session) -> El {
+pub fn sidebar(k: &Kit, session: &Session, adding: bool) -> El {
     let mut sidebar = Sidebar::new().label("Mailboxes").header_padding(0.0, 12.0).row_gap(2.0);
+    sidebar = sidebar.section(accounts(k, session, adding));
     for m in &MAILBOXES {
         let mut r = SidebarRow::new(m.name).icon(m.icon).height(30.0);
         if m.badge {
@@ -60,29 +65,82 @@ pub fn sidebar(k: &Kit, email: &str, session: &Session) -> El {
                 .rows(rows),
         );
     }
-    let account = SidebarRow::new(email).subtitle(sync_status(session)).height(45.0).select_only();
+    let shown = match session.single() {
+        Some(account) => account.email.clone(),
+        None => format!("{} accounts", session.accounts.len()),
+    };
+    let account = SidebarRow::new(shown).subtitle(sync_status(session)).height(45.0).select_only();
     // Sync is routine; Sign Out deletes local mail, so it's quieter and asks first (the "…").
-    let controls = row()
-        .gap(4.0)
-        .px(4.0)
-        .child(
-            Button::new("Sync Now")
-                .variant(ButtonVariant::GhostMuted)
-                .help("Check for new mail now")
-                .on_press_tx(instant(|s: &mut App| s.sync_now()))
-                .build(k)
-                .key("sync-now"),
-        )
-        .child(
+    // It signs out of the account shown, so with every account shown it waits for a choice.
+    let mut controls = row().gap(4.0).px(4.0).child(
+        Button::new("Sync Now")
+            .variant(ButtonVariant::GhostMuted)
+            .help("Check every account for new mail now")
+            .on_press_tx(instant(|s: &mut App| s.sync_now()))
+            .build(k)
+            .key("sync-now"),
+    );
+    if let Some(single) = session.single() {
+        controls = controls.child(
             Button::new("Sign Out…")
                 .variant(ButtonVariant::GhostMuted)
-                .help("Sign out and remove this account's mail from this Mac")
+                .help(format!("Sign out of {} and remove its mail from this Mac", single.email))
                 .on_press_tx(instant(|s: &mut App| s.ask_sign_out()))
                 .build(k)
                 .key("sign-out"),
         );
+    }
     let footer = col().w_full().gap(2.0).child(account.build(k).key("account")).child(controls);
     sidebar.footer(footer).build(k)
+}
+
+/// The signed-in accounts, "All Inboxes" above them when there are several, and Add Account.
+fn accounts(k: &Kit, session: &Session, adding: bool) -> SidebarSection {
+    let several = session.accounts.len() > 1;
+    let mut section = SidebarSection::new("Accounts").key("accounts");
+    if several {
+        let total: u64 = session.accounts.iter().map(|a| a.inbox_unread).sum();
+        let all = SidebarRow::new("All Inboxes").icon(&icons::INBOX).height(30.0).selected(session.scope.is_none());
+        section = section.row(
+            with_badge(all, total)
+                .on_select(|s: &mut App, tx| {
+                    tx.instant();
+                    s.select_account(None)
+                })
+                .build(k)
+                .key("account-all"),
+        );
+    }
+    for a in &session.accounts {
+        let id = a.id;
+        // With one account there's nothing to switch between: its row only says which it is.
+        let mut r = SidebarRow::new(&a.email).icon(&icons::ACCOUNT).height(30.0);
+        if several {
+            r = with_badge(r, a.inbox_unread).selected(session.scope == Some(id)).on_select(move |s: &mut App, tx| {
+                tx.instant();
+                s.select_account(Some(id))
+            });
+        } else {
+            r = r.select_only();
+        }
+        section = section.row(r.build(k).key(format!("account-{}", a.email)));
+    }
+    let add = if adding {
+        SidebarRow::new("Signing in…").icon(&icons::ADD).height(30.0).select_only().trailing(
+            Button::new("Cancel")
+                .variant(ButtonVariant::GhostMuted)
+                .help("Stop adding the account")
+                .on_press_tx(instant(|s: &mut App| s.cancel_add_account()))
+                .build(k)
+                .key("add-account-cancel"),
+        )
+    } else {
+        SidebarRow::new("Add Account…").icon(&icons::ADD).height(30.0).on_select(|s: &mut App, tx| {
+            tx.instant();
+            s.add_account()
+        })
+    };
+    section.row(add.build(k).key("add-account"))
 }
 
 fn finish(row: SidebarRow, id: &str, session: &Session, k: &Kit) -> El {
@@ -110,10 +168,10 @@ pub fn leaf(name: &str) -> &str {
 }
 
 pub fn sync_status(session: &Session) -> String {
-    if session.error.is_some() {
+    if session.shown_error().is_some() {
         return "Sync paused".into();
     }
-    match session.sync {
+    match session.sync_status() {
         SyncStatus::Syncing { fetched: 0 } => "Syncing…".into(),
         SyncStatus::Syncing { fetched } => format!("Syncing… {fetched} messages"),
         SyncStatus::Synced => "Up to date".into(),

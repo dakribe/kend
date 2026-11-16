@@ -118,3 +118,16 @@ pub static UNDO: Icon = Icon {
         stroke!("M2.5 6.5H9.5C11.75 6.5 13.5 8.25 13.5 10.25C13.5 12.25 11.75 13 9.5 13H7")
     ),
 };
+
+// Accounts.
+
+pub static ACCOUNT: Icon = Icon {
+    name: "kend-account",
+    view: 16.0,
+    body: concat!(
+        "<circle cx=\"8\" cy=\"5.75\" r=\"2.5\" stroke=\"currentColor\" stroke-width=\"1.2\" fill=\"none\"/>",
+        stroke!("M3 13.5C3.5 11 5.5 9.75 8 9.75C10.5 9.75 12.5 11 13 13.5")
+    ),
+};
+
+pub static ADD: Icon = Icon { name: "kend-add", view: 16.0, body: stroke!("M8 3.5V12.5M3.5 8H12.5") };

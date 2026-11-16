@@ -5,6 +5,8 @@
 use rune::{El, KeyEvent, TextEdit, Tx, col, row, text};
 use rune_kit::{Keybind, Kit, TextInput};
 
+use kend_store::AccountId;
+
 use crate::app::App;
 use crate::session::{Mark, Move};
 use crate::sidebar::{MAILBOXES, leaf, mailbox_name};
@@ -46,7 +48,11 @@ pub enum Command {
     ShowSender,
     LeaveSender,
     Shortcuts,
-    SignOut,
+    /// Sign out of one account, by address.
+    SignOutOf(String),
+    AddAccount,
+    /// Show one account's mail, or every account's (`None`).
+    Account(Option<AccountId>),
     Send,
     Discard,
     /// Go to a mailbox or label, by its Gmail label id.
@@ -137,7 +143,20 @@ pub fn entries(app: &App) -> Vec<Entry> {
     for l in &session.labels {
         out.push(Entry::new(Go(l.id.clone()), format!("Go to {}", leaf(&l.name)), &[]));
     }
-    out.push(Entry::new(SignOut, "Sign Out…", &[]));
+    if session.accounts.len() > 1 {
+        if session.scope.is_some() {
+            out.push(Entry::new(Account(None), "Go to All Inboxes", &[]));
+        }
+        for a in session.accounts.iter().filter(|a| session.scope != Some(a.id)) {
+            out.push(Entry::new(Account(Some(a.id)), format!("Go to {}", a.email), &[]));
+        }
+    }
+    if app.adding.is_none() {
+        out.push(Entry::new(AddAccount, "Add Account…", &[]));
+    }
+    for a in &session.accounts {
+        out.push(Entry::new(SignOutOf(a.email.clone()), format!("Sign Out of {}…", a.email), &[]));
+    }
     out
 }
 
@@ -249,7 +268,12 @@ impl App {
             Command::ShowSender => self.show_sender(),
             Command::LeaveSender => self.leave_sender(),
             Command::Shortcuts => self.help = true,
-            Command::SignOut => self.ask_sign_out(),
+            Command::SignOutOf(email) => self.ask_sign_out_of(&email),
+            Command::AddAccount => self.add_account(),
+            Command::Account(scope) => {
+                self.close_message();
+                self.select_account(scope);
+            }
             Command::Send => self.send(),
             Command::Discard => self.discard_compose(),
             Command::Go(mailbox) => {

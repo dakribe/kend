@@ -137,8 +137,53 @@ fn inbox_with(sync: SyncStatus, extra: usize) -> Auth {
         })
         .ok()
         .map(|mut session| {
-            session.sync = sync;
+            for a in &mut session.accounts {
+                a.sync = sync;
+            }
             Box::new(session)
         });
-    Auth::SignedIn { account, session }
+    Auth::SignedIn { accounts: vec![account], session }
+}
+
+/// The sample inbox beside a work account's, both shown together.
+pub fn two_accounts() -> Auth {
+    let Auth::SignedIn { mut accounts, session: Some(mut session) } = sample_inbox(SyncStatus::Synced) else {
+        return Auth::SignedOut { error: None };
+    };
+    let work = Account::new("you@work.example".into(), String::new());
+    let mail = [
+        ("Priya Nair", "priya@work.example", "Launch checklist", "Two items left before Thursday: copy review and", 1),
+        (
+            "Linear",
+            "notify@linear.example",
+            "3 issues assigned to you",
+            "KEN-41 Combined inbox, KEN-42 Account switcher",
+            3,
+        ),
+    ];
+    let messages: Vec<NewMessage> = mail
+        .iter()
+        .enumerate()
+        .map(|(i, (name, email, subject, snippet, age))| NewMessage {
+            gmail_id: format!("work-{i}"),
+            from: Address::new(*name, *email),
+            subject: (*subject).into(),
+            snippet: (*snippet).into(),
+            received_at: now_ms() - age * 25 * 60_000,
+            label_ids: vec!["INBOX".into(), "UNREAD".into()],
+            ..NewMessage::default()
+        })
+        .collect();
+    let added = session.add_account(&work.email, None, None).and_then(|id| {
+        session.store_for_samples().upsert_messages(id, &messages)?;
+        Ok(())
+    });
+    if added.is_ok() {
+        for a in &mut session.accounts {
+            a.sync = SyncStatus::Synced;
+        }
+        session.reload();
+        accounts.push(work);
+    }
+    Auth::SignedIn { accounts, session: Some(session) }
 }

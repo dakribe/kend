@@ -1,4 +1,4 @@
-use kend_gmail::{Account, CancelToken};
+use kend_gmail::CancelToken;
 use rune::{Align, Cx, El, col, el, row, text};
 use rune_kit::shell::{SidebarToggle, SplitView, Toolbar};
 use rune_kit::{
@@ -34,6 +34,11 @@ pub const SCENES: &[Scene] = &[
         }
     }),
     ("large", |s| s.auth = samples::large_inbox(5_000)),
+    ("accounts", |s| s.auth = samples::two_accounts()),
+    ("adding-account", |s| {
+        s.auth = sample_inbox(SyncStatus::Synced);
+        s.adding = Some(crate::app::Adding::waiting());
+    }),
     ("reading", |s| {
         s.auth = sample_inbox(SyncStatus::Synced);
         s.open_message("sample-0");
@@ -80,7 +85,7 @@ pub const SCENES: &[Scene] = &[
     }),
     ("sign-out", |s| {
         s.auth = sample_inbox(SyncStatus::Synced);
-        s.confirm_sign_out = true;
+        s.confirm_sign_out = Some("you@gmail.com".into());
     }),
     ("discarded", |s| {
         s.auth = sample_inbox(SyncStatus::Synced);
@@ -246,24 +251,16 @@ fn build(s: &App, cx: &mut Cx<App>) -> El {
                         .key("cancel"),
                 )
         }
-        Auth::SignedIn { account, session: Some(session) } => {
+        Auth::SignedIn { session: Some(session), .. } => {
             let inset = cx.titlebar_inset();
-            return mail(s, &k, cx.system_dark(), inset, cx.is_reduced_motion(), account, session);
+            return mail(s, &k, cx.system_dark(), inset, cx.is_reduced_motion(), session);
         }
     };
     col().w_full().h_full().center().fill(k.c.bg_base).child(content)
 }
 
 /// The signed-in window: the sidebar beside the selected mailbox's messages.
-fn mail(
-    s: &App,
-    k: &Kit,
-    dark: bool,
-    titlebar_inset: f32,
-    reduced_motion: bool,
-    account: &Account,
-    session: &Session,
-) -> El {
+fn mail(s: &App, k: &Kit, dark: bool, titlebar_inset: f32, reduced_motion: bool, session: &Session) -> El {
     let searching = session.results.as_ref();
     let title = match (searching, &session.sender) {
         (Some(_), _) => "Search",
@@ -329,8 +326,8 @@ fn mail(
         toolbar = toolbar.center(search).trailing(new_message.build(k)).trailing(help);
     }
     let mut main = col().w_full().h_full().min_h(0.0);
-    if let Some(error) = &session.error {
-        main = main.child(sync_error(k, error));
+    if let Some(error) = session.shown_error() {
+        main = main.child(sync_error(k, &error));
     }
     // The action bar comes first, so its buttons sit at the same height on every screen.
     if !composing {
@@ -344,13 +341,17 @@ fn mail(
         main = main.child(sender_strip(k, &sender.address.email));
     }
     let content = match (&session.compose, &session.reading) {
-        (Some(compose), _) => compose_view(k, compose),
+        (Some(compose), _) => {
+            // Which account it goes from matters only when there's a choice.
+            let from = compose.account.and_then(|a| session.linked(a)).map(|a| a.email.as_str());
+            compose_view(k, compose, from.filter(|_| session.accounts.len() > 1))
+        }
         (None, Some(reading)) => reading_view(k, dark, reading),
         (None, None) => message_list(k, dark, session),
     };
     let main = main.child(col().w_full().grow(1.0).min_h(0.0).child(content));
     SplitView::new(main)
-        .sidebar(&s.sidebar, |s: &mut App| &mut s.sidebar, sidebar(k, &account.email, session))
+        .sidebar(&s.sidebar, |s: &mut App| &mut s.sidebar, sidebar(k, session, s.adding.is_some()))
         .toolbar(toolbar)
         .titlebar_inset(titlebar_inset)
         .frame_inset(8.0)
@@ -399,10 +400,7 @@ fn back(k: &Kit, to: &str, key: &str, press: fn(&mut App)) -> El {
 
 /// Sign Out deletes this account's mail from this Mac, so it asks first and says so.
 fn sign_out_dialog(k: &Kit, s: &App, layer: &mut Vec<El>) {
-    let email = match &s.auth {
-        Auth::SignedIn { account, .. } => account.email.clone(),
-        _ => String::new(),
-    };
+    let email = s.confirm_sign_out.clone().unwrap_or_default();
     let body = col()
         .key("sign-out-confirm")
         .w_full()
@@ -427,7 +425,7 @@ fn sign_out_dialog(k: &Kit, s: &App, layer: &mut Vec<El>) {
                     Button::new("Cancel")
                         .variant(ButtonVariant::Ghost)
                         .shortcut("Esc")
-                        .on_press_tx(instant(|s: &mut App| s.confirm_sign_out = false))
+                        .on_press_tx(instant(|s: &mut App| s.confirm_sign_out = None))
                         .build(k)
                         .key("sign-out-cancel"),
                 )
@@ -439,11 +437,11 @@ fn sign_out_dialog(k: &Kit, s: &App, layer: &mut Vec<El>) {
                         .key("sign-out-confirmed"),
                 ),
         );
-    Dialog::new("sign-out", "Sign out of kend?")
-        .open(s.confirm_sign_out)
+    Dialog::new("sign-out", format!("Sign out of {email}?"))
+        .open(s.confirm_sign_out.is_some())
         .width(400.0)
         .fit()
-        .on_close(|s: &mut App| s.confirm_sign_out = false)
+        .on_close(|s: &mut App| s.confirm_sign_out = None)
         .child(body)
         .build(k, layer);
 }
@@ -717,6 +715,47 @@ mod tests {
         lands_in_one_frame(&mut rt, "Undo button", |rt| click(rt, "undo"));
         lands_in_one_frame(&mut rt, "asking to sign out", |rt| click(rt, "sign-out"));
         lands_in_one_frame(&mut rt, "cancelling sign out", |rt| click(rt, "sign-out-cancel"));
+    }
+
+    #[test]
+    fn all_inboxes_lists_every_account_and_switching_lands_at_once() {
+        let mut rt = render("accounts");
+        for key in ["account-all", "account-you@gmail.com", "account-you@work.example", "add-account"] {
+            assert!(rt.find(key).is_some(), "{key} missing");
+        }
+        assert!(rt.find("work-0").is_some() && rt.find("sample-0").is_some(), "both accounts' mail");
+        assert!(rt.find("row-account").is_some(), "rows say which account");
+        assert!(rt.find("mailbox-Label_2").is_none(), "labels wait for one account");
+        assert!(rt.find("sign-out").is_none(), "Sign Out waits for one account");
+
+        lands_in_one_frame(&mut rt, "choosing an account", |rt| click(rt, "account-you@work.example"));
+        assert!(rt.find("work-0").is_some() && rt.find("sample-0").is_none());
+        assert!(rt.find("row-account").is_none());
+        lands_in_one_frame(&mut rt, "choosing the other", |rt| click(rt, "account-you@gmail.com"));
+        assert!(rt.find("mailbox-Label_2").is_some(), "its labels are back");
+        lands_in_one_frame(&mut rt, "back to all inboxes", |rt| click(rt, "account-all"));
+        assert!(rt.find("work-0").is_some() && rt.find("sample-0").is_some());
+    }
+
+    #[test]
+    fn compose_says_which_account_it_sends_from_only_when_there_is_a_choice() {
+        let mut rt = render("accounts");
+        click(&mut rt, "new-message");
+        rt.frame(0.0);
+        assert!(rt.find("compose-from").is_some());
+        let mut rt = render("compose");
+        rt.frame(0.0);
+        assert!(rt.find("compose-from").is_none());
+    }
+
+    #[test]
+    fn adding_an_account_can_be_cancelled() {
+        let mut rt = render("adding-account");
+        assert!(rt.find("add-account-cancel").is_some());
+        click(&mut rt, "add-account-cancel");
+        rt.frame(0.0);
+        assert!(rt.state.adding.is_none());
+        assert!(rt.find("add-account-cancel").is_none());
     }
 
     /// Archive and Delete are in the same place in the list and in an open message.

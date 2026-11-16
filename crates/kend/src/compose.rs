@@ -3,7 +3,7 @@
 
 use jiff::Zoned;
 use kend_gmail::{Outgoing, forward_subject, parse_recipients, reply_subject};
-use kend_store::{Address, Message};
+use kend_store::{AccountId, Address, Message};
 use rune::{El, KeyEvent, ScrollSpec, TextEdit, Tx, col, el, row, text};
 use rune_kit::{Button, ButtonVariant, Kit, TextArea, TextInput};
 
@@ -25,6 +25,8 @@ pub enum SendState {
 
 pub struct Compose {
     pub kind: ComposeKind,
+    /// The account it's sent from. A reply goes from the account the original came to.
+    pub account: Option<AccountId>,
     pub to: TextEdit,
     pub cc: TextEdit,
     pub subject: TextEdit,
@@ -81,7 +83,7 @@ impl Compose {
     }
 
     fn with(kind: ComposeKind, to: TextEdit, subject: TextEdit, body: TextEdit) -> Self {
-        Self { kind, to, cc: TextEdit::new(""), subject, body, state: SendState::Editing }
+        Self { kind, account: None, to, cc: TextEdit::new(""), subject, body, state: SendState::Editing }
     }
 
     pub fn field(&mut self, field: Field) -> &mut TextEdit {
@@ -152,7 +154,9 @@ fn send_shortcut(s: &mut App, event: &KeyEvent, _tx: &mut Tx) -> bool {
     false
 }
 
-pub fn compose_view(k: &Kit, compose: &Compose) -> El {
+/// `from` is the sending address, shown when there's more than one account to send from; then
+/// the button beside it switches to the next account.
+pub fn compose_view(k: &Kit, compose: &Compose, from: Option<&str>) -> El {
     let sending = matches!(compose.state, SendState::Sending);
     // A label beside each field, so it still says what it is once filled in.
     let input = |edit: &TextEdit, name: &str, field: Field, key: &str| {
@@ -204,14 +208,27 @@ pub fn compose_view(k: &Kit, compose: &Compose) -> El {
         .build(k)
         .key("compose-body");
 
-    let mut page = col()
-        .w_full()
-        .max_w(720.0)
-        .px(32.0)
-        .pt(24.0)
-        .pb(48.0)
-        .gap(12.0)
-        .child(header)
+    let mut page = col().w_full().max_w(720.0).px(32.0).pt(24.0).pb(48.0).gap(12.0).child(header);
+    if let Some(from) = from {
+        let change = Button::new("Change")
+            .variant(ButtonVariant::GhostMuted)
+            .help("Send from another account")
+            .disabled(sending)
+            .on_press_tx(instant(|s: &mut App| s.next_from_account()))
+            .build(k)
+            .key("compose-from-change");
+        page = page.child(
+            row()
+                .key("compose-from")
+                .w_full()
+                .gap(10.0)
+                .items_center()
+                .child(text("From").font(k.ty.ui).color(k.c.text_muted).w(56.0))
+                .child(text(from).key("compose-from-address").font(k.ty.ui).color(k.c.text_base).truncate().min_w(0.0))
+                .child(change),
+        );
+    }
+    page = page
         .child(input(&compose.to, "To", Field::To, "compose-to"))
         .child(input(&compose.cc, "Cc", Field::Cc, "compose-cc"))
         .child(input(&compose.subject, "Subject", Field::Subject, "compose-subject"));

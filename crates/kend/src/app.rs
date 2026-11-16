@@ -1,12 +1,13 @@
 //! App state. Slow work (Keychain, browser sign-in, network) runs on background threads and
 //! lands here as an [`Event`] in `poll`, so the window never waits on it.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 
 use kend_gmail::{Account, CancelToken, ClientCredentials, Error, Gmail, MessageBody};
-use kend_store::Store;
+use kend_store::{AccountId, Store};
 use rune::{Key, KeyEvent, TextEdit, Tx, Waker};
 use rune_kit::PaneState;
 use rune_kit::shell;
@@ -25,8 +26,10 @@ pub struct App {
     pub sidebar: PaneState,
     /// Whether the keyboard shortcuts dialog is open (?).
     pub help: bool,
-    /// Whether Sign Out is waiting for confirmation: it deletes this account's local mail.
-    pub confirm_sign_out: bool,
+    /// The account Sign Out is waiting to confirm: signing out deletes its local mail.
+    pub confirm_sign_out: Option<String>,
+    /// Another account's sign-in, waiting on the browser while the mail stays usable.
+    pub adding: Option<Adding>,
     /// The command palette (⌘K).
     pub palette: Palette,
     /// A G was just pressed: another G goes to the top of the list (as in Vim).
@@ -52,26 +55,42 @@ pub enum Auth {
         attempt: u64,
         cancel: CancelToken,
     },
-    /// `session` opens on the next poll: the database and the sync worker.
+    /// `session` opens on the next poll: the database and a sync worker per account.
     SignedIn {
-        account: Account,
+        accounts: Vec<Account>,
         session: Option<Box<Session>>,
     },
 }
 
+/// Signing in to one more account. `attempt` fences off answers from a cancelled one.
+pub struct Adding {
+    attempt: u64,
+    cancel: CancelToken,
+}
+
+impl Adding {
+    /// One waiting on the browser, for snapshots.
+    pub fn waiting() -> Self {
+        Self { attempt: 0, cancel: CancelToken::default() }
+    }
+}
+
 pub enum Event {
-    Loaded(Result<Option<Account>, Error>),
+    Loaded(Result<Vec<Account>, Error>),
     SignInFinished {
         attempt: u64,
         result: Result<Account, Error>,
     },
+    /// News from the sync worker of the account `email`.
     Sync {
         session: u64,
+        email: String,
         update: SyncUpdate,
     },
     /// A message body fetched for reading.
     Body {
         session: u64,
+        account: AccountId,
         gmail_id: String,
         result: Result<Option<MessageBody>, String>,
     },
@@ -102,6 +121,7 @@ pub enum Event {
     /// Gmail's answer to marking a message read.
     MarkedRead {
         session: u64,
+        account: AccountId,
         gmail_id: String,
         result: Result<(), String>,
     },
@@ -120,7 +140,8 @@ impl App {
             scratch: TextEdit::new(""),
             sidebar: PaneState::new(232.0).range(180.0, 360.0),
             help: false,
-            confirm_sign_out: false,
+            confirm_sign_out: None,
+            adding: None,
             palette: Palette::default(),
             client,
             sender,
@@ -135,8 +156,7 @@ impl App {
     pub fn setup(&mut self, waker: Waker) {
         self.waker = Some(waker);
         if matches!(self.auth, Auth::Loading) {
-            // One account for now; the app shows several in the next step.
-            self.spawn("keychain", || Event::Loaded(kend_gmail::saved_accounts().map(|a| a.into_iter().next())));
+            self.spawn("keychain", || Event::Loaded(kend_gmail::saved_accounts()));
         }
     }
 
@@ -159,28 +179,55 @@ impl App {
     /// Applies one event. Answers the current state didn't ask for change nothing.
     pub fn apply(&mut self, event: Event) -> bool {
         let next = match (&mut self.auth, event) {
-            (Auth::Loading, Event::Loaded(Ok(Some(account)))) => Auth::SignedIn { account, session: None },
-            (Auth::Loading, Event::Loaded(Ok(None))) => Auth::SignedOut { error: None },
+            (Auth::Loading, Event::Loaded(Ok(accounts))) if accounts.is_empty() => Auth::SignedOut { error: None },
+            (Auth::Loading, Event::Loaded(Ok(accounts))) => Auth::SignedIn { accounts, session: None },
             (Auth::Loading, Event::Loaded(Err(err))) => Auth::SignedOut { error: Some(err.to_string()) },
             (Auth::SigningIn { attempt, .. }, Event::SignInFinished { attempt: done, result }) if *attempt == done => {
                 match result {
-                    Ok(account) => Auth::SignedIn { account, session: None },
+                    Ok(account) => Auth::SignedIn { accounts: vec![account], session: None },
                     Err(Error::Cancelled) => Auth::SignedOut { error: None },
                     Err(err) => Auth::SignedOut { error: Some(err.to_string()) },
                 }
             }
-            (Auth::SignedIn { session: Some(session), .. }, Event::Sync { session: id, update })
+            (Auth::SignedIn { accounts, session: Some(session) }, Event::SignInFinished { attempt, result })
+                if self.adding.as_ref().is_some_and(|a| a.attempt == attempt) =>
+            {
+                self.adding = None;
+                match result {
+                    Ok(account) => {
+                        let email = account.email.clone();
+                        accounts.retain(|a| a.email != email);
+                        accounts.push(account.clone());
+                        let linked = link(self.client, &self.sender, &self.waker, session.id, &account);
+                        match linked.and_then(|(worker, gmail)| session.add_account(&email, worker, gmail)) {
+                            Ok(id) => session.select_account(Some(id)),
+                            Err(err) => session.error = Some(format!("Couldn't add {email}: {err}")),
+                        }
+                    }
+                    Err(Error::Cancelled) => {}
+                    Err(err) => session.error = Some(format!("Couldn't add the account: {err}")),
+                }
+                return true;
+            }
+            (Auth::SignedIn { accounts, session: Some(session) }, Event::Sync { session: id, email, update })
                 if session.id == id =>
             {
-                if !session.apply(update) {
+                if !session.apply(&email, update) {
+                    return true;
+                }
+                // Google no longer accepts this account's sign-in. The others carry on.
+                if accounts.len() > 1 {
+                    accounts.retain(|a| a.email != email);
+                    session.remove_account(&email);
+                    session.error = Some(format!("{email}: {}", Error::SignedOut));
                     return true;
                 }
                 Auth::SignedOut { error: Some(Error::SignedOut.to_string()) }
             }
-            (Auth::SignedIn { session: Some(session), .. }, Event::Body { session: id, gmail_id, result })
+            (Auth::SignedIn { session: Some(session), .. }, Event::Body { session: id, account, gmail_id, result })
                 if session.id == id =>
             {
-                session.body_loaded(&gmail_id, result);
+                session.body_loaded(account, &gmail_id, result);
                 return true;
             }
             (Auth::SignedIn { session: Some(session), .. }, Event::Moved { session: id, failed, error })
@@ -225,9 +272,9 @@ impl App {
             }
             (
                 Auth::SignedIn { session: Some(session), .. },
-                Event::MarkedRead { session: id, gmail_id, result: Err(error) },
+                Event::MarkedRead { session: id, account, gmail_id, result: Err(error) },
             ) if session.id == id => {
-                session.mark_read_failed(&gmail_id, error);
+                session.mark_read_failed(account, &gmail_id, error);
                 return true;
             }
             _ => return false,
@@ -236,26 +283,28 @@ impl App {
         true
     }
 
-    /// Opens the session for a newly signed-in account: its stored mail first, then sync.
+    /// Opens the session for the signed-in accounts: their stored mail first, then sync.
     fn open_session(&mut self) -> bool {
-        let Some(client) = self.client else {
+        if self.client.is_none() {
             return false;
-        };
-        let Auth::SignedIn { account, session: session @ None } = &mut self.auth else {
+        }
+        let Auth::SignedIn { accounts, session: session @ None } = &mut self.auth else {
             return false;
         };
         self.next_attempt += 1;
         let id = self.next_attempt;
-        let gmail = Arc::new(Gmail::new(client, account.clone()));
         let opened = Store::default_path().and_then(|path| {
-            let worker = SyncWorker::start(Spec {
-                gmail: gmail.clone(),
-                db_path: path.clone(),
-                session: id,
-                events: self.sender.clone(),
-                waker: self.waker.clone(),
-            });
-            let mut session = Session::open(id, Store::open(&path)?, &account.email, Some(worker), Some(gmail))?;
+            let mut opened: Option<Session> = None;
+            for account in accounts.iter() {
+                let (worker, gmail) = link(self.client, &self.sender, &self.waker, id, account)?;
+                match &mut opened {
+                    Some(session) => {
+                        session.add_account(&account.email, worker, gmail)?;
+                    }
+                    None => opened = Some(Session::open(id, Store::open(&path)?, &account.email, worker, gmail)?),
+                }
+            }
+            let mut session = opened.ok_or(kend_store::Error::NoDataDir)?;
             if let Some(waker) = self.waker.clone() {
                 session.search_in_background(Store::open(&path)?, waker);
             }
@@ -287,6 +336,40 @@ impl App {
         }
     }
 
+    /// Signs in to one more account in the browser. The mail already here stays usable.
+    pub fn add_account(&mut self) {
+        let Some(client) = self.client else { return };
+        if self.adding.is_some() || self.session().is_none() {
+            return;
+        }
+        self.next_attempt += 1;
+        let attempt = self.next_attempt;
+        let cancel = CancelToken::default();
+        self.adding = Some(Adding { attempt, cancel: cancel.clone() });
+        self.spawn("sign-in", move || Event::SignInFinished { attempt, result: kend_gmail::sign_in(&client, &cancel) });
+    }
+
+    pub fn cancel_add_account(&mut self) {
+        if let Some(adding) = self.adding.take() {
+            adding.cancel.cancel();
+        }
+    }
+
+    /// Shows one account's mail, or every account's (`None`).
+    pub fn select_account(&mut self, scope: Option<AccountId>) {
+        if let Some(session) = self.session_mut() {
+            session.select_account(scope);
+        }
+    }
+
+    /// The compose window's From: the next account.
+    pub fn next_from_account(&mut self) {
+        let Some(session) = self.session_mut() else { return };
+        let ids: Vec<AccountId> = session.accounts.iter().map(|a| a.id).collect();
+        let Some(compose) = &mut session.compose else { return };
+        let at = compose.account.and_then(|a| ids.iter().position(|&id| id == a)).unwrap_or(0);
+        compose.account = ids.get((at + 1) % ids.len().max(1)).copied();
+    }
     pub fn sync_now(&mut self) {
         if let Some(session) = self.session_mut() {
             session.sync_now();
@@ -343,32 +426,36 @@ impl App {
     pub fn open_message(&mut self, gmail_id: &str) {
         let Some(session) = self.session_mut() else { return };
         let opened = session.open_message(gmail_id);
-        let (id, gmail) = (session.id, session.gmail.clone());
-        let Some(gmail) = gmail else { return };
+        let Some(account) = session.account_of(gmail_id) else { return };
+        let id = session.id;
+        let Some(gmail) = session.linked(account).and_then(|a| a.gmail.clone()) else { return };
         if opened.fetch_body {
-            self.fetch_body(id, gmail.clone(), gmail_id.to_string());
+            self.fetch_body(id, account, gmail.clone(), gmail_id.to_string());
         }
         if opened.mark_read {
             let gmail_id = gmail_id.to_string();
             self.spawn("mark-read", move || {
                 let result = gmail.modify_labels(&gmail_id, &[], &["UNREAD"]).map_err(|e| e.to_string());
-                Event::MarkedRead { session: id, gmail_id, result }
+                Event::MarkedRead { session: id, account, gmail_id, result }
             });
         }
     }
 
-    fn fetch_body(&self, session: u64, gmail: Arc<Gmail>, gmail_id: String) {
+    fn fetch_body(&self, session: u64, account: AccountId, gmail: Arc<Gmail>, gmail_id: String) {
         self.spawn("body", move || {
             let result = gmail.body(&gmail_id).map_err(|e| e.to_string());
-            Event::Body { session, gmail_id, result }
+            Event::Body { session, account, gmail_id, result }
         });
     }
 
+    /// A new message, from the account shown (or the first one, with all of them shown).
     pub fn compose_new(&mut self) {
         if let Some(session) = self.session_mut() {
             session.notice = None;
             session.discarded = None;
-            session.compose = Some(Compose::new());
+            let mut compose = Compose::new();
+            compose.account = session.single().or(session.accounts.first()).map(|a| a.id);
+            session.compose = Some(compose);
         }
     }
 
@@ -377,8 +464,9 @@ impl App {
         let Some(session) = self.session_mut() else { return };
         let Some(reading) = &session.reading else { return };
         let now = jiff::Zoned::now();
-        let compose =
+        let mut compose =
             if forward { Compose::forward(&reading.message, &now) } else { Compose::reply(&reading.message, &now) };
+        compose.account = Some(reading.message.summary.account);
         session.notice = None;
         session.discarded = None;
         session.compose = Some(compose);
@@ -388,12 +476,12 @@ impl App {
     pub fn move_message(&mut self, action: Move) {
         let Some(session) = self.session_mut() else { return };
         let moved = session.move_messages(action);
-        let (id, Some(gmail)) = (session.id, session.gmail.clone()) else { return };
-        if moved.is_empty() {
+        let (id, clients) = (session.id, session.clients());
+        if moved.is_empty() || clients.is_empty() {
             return;
         }
         self.spawn("move", move || {
-            let (failed, error) = each_in_gmail(moved, |m| match action {
+            let (failed, error) = each_in_gmail(moved, &clients, |gmail, m| match action {
                 Move::Archive => gmail.modify_labels(&m.gmail_id, &[], &["INBOX"]),
                 Move::Trash => gmail.trash(&m.gmail_id),
             });
@@ -424,14 +512,15 @@ impl App {
     fn mark_ids(&mut self, ids: &[String], mark: Mark) {
         let Some(session) = self.session_mut() else { return };
         let changed = session.mark(ids, mark);
-        let (id, Some(gmail)) = (session.id, session.gmail.clone()) else { return };
-        if changed.is_empty() {
+        let (id, clients) = (session.id, session.clients());
+        if changed.is_empty() || clients.is_empty() {
             return;
         }
         self.spawn("mark", move || {
             let label = [mark.label()];
             let (add, remove): (&[&str], &[&str]) = if mark.adds() { (&label, &[]) } else { (&[], &label) };
-            let (failed, error) = each_in_gmail(changed, |m| gmail.modify_labels(&m.gmail_id, add, remove));
+            let (failed, error) =
+                each_in_gmail(changed, &clients, |gmail, m| gmail.modify_labels(&m.gmail_id, add, remove));
             Event::Marked { session: id, failed, error }
         });
     }
@@ -444,9 +533,12 @@ impl App {
             return;
         }
         let Some(undo) = session.undo_move() else { return };
-        let (id, Some(gmail)) = (session.id, session.gmail.clone()) else { return };
+        let (id, clients) = (session.id, session.clients());
+        if clients.is_empty() {
+            return;
+        }
         self.spawn("undo", move || {
-            let (_, error) = each_in_gmail(undo.messages, |m| match undo.action {
+            let (_, error) = each_in_gmail(undo.messages, &clients, |gmail, m| match undo.action {
                 Move::Archive => gmail.modify_labels(&m.gmail_id, &["INBOX"], &[]),
                 Move::Trash => gmail.untrash(&m.gmail_id),
             });
@@ -503,9 +595,17 @@ impl App {
         }
     }
 
-    /// The Sign Out button and palette entry: asks first.
+    /// The Sign Out button and palette entry for the account shown: asks first.
     pub fn ask_sign_out(&mut self) {
-        self.confirm_sign_out = true;
+        let email = self.session().and_then(|s| s.single()).map(|a| a.email.clone());
+        if email.is_some() {
+            self.confirm_sign_out = email;
+        }
+    }
+
+    /// Sign Out of one account, from the palette: asks first.
+    pub fn ask_sign_out_of(&mut self, email: &str) {
+        self.confirm_sign_out = Some(email.to_string());
     }
 
     /// The search field, or a scratch edit before a session opens.
@@ -556,19 +656,25 @@ impl App {
     /// Sends the message being written, in the background. A reply first fetches the headers
     /// that keep it in its conversation.
     pub fn send(&mut self) {
-        let Auth::SignedIn { account, session: Some(session) } = &mut self.auth else { return };
+        let Some(session) = self.session_mut() else { return };
+        let from = session.compose.as_ref().and_then(|c| c.account).and_then(|a| session.linked(a));
+        let (email, gmail) = from.map(|a| (a.email.clone(), a.gmail.clone())).unzip();
         let Some(compose) = &mut session.compose else { return };
         if matches!(compose.state, SendState::Sending) {
             return;
         }
-        let mut outgoing = match compose.outgoing(&account.email) {
+        let Some(email) = email else {
+            compose.state = SendState::Failed("Choose an account to send from.".into());
+            return;
+        };
+        let mut outgoing = match compose.outgoing(&email) {
             Ok(outgoing) => outgoing,
             Err(err) => {
                 compose.state = SendState::Failed(err);
                 return;
             }
         };
-        let Some(gmail) = session.gmail.clone() else {
+        let Some(gmail) = gmail.flatten() else {
             compose.state = SendState::Failed("Not connected to Gmail.".into());
             return;
         };
@@ -617,9 +723,10 @@ impl App {
     pub fn retry_body(&mut self) {
         let Some(session) = self.session_mut() else { return };
         let Some(gmail_id) = session.retry_body() else { return };
-        if let Some(gmail) = session.gmail.clone() {
+        let Some(account) = session.account_of(&gmail_id) else { return };
+        if let Some(gmail) = session.linked(account).and_then(|a| a.gmail.clone()) {
             let id = session.id;
-            self.fetch_body(id, gmail, gmail_id);
+            self.fetch_body(id, account, gmail, gmail_id);
         }
     }
 
@@ -645,10 +752,10 @@ impl App {
             // The palette's field handles its own keys.
             return false;
         }
-        if self.confirm_sign_out {
+        if self.confirm_sign_out.is_some() {
             // The dialog's buttons answer; Escape cancels.
             if matches!(&event.key, Key::Escape) {
-                self.confirm_sign_out = false;
+                self.confirm_sign_out = None;
                 return true;
             }
             return false;
@@ -800,15 +907,25 @@ impl App {
         true
     }
 
-    /// Stops sync, then (off the UI thread) deletes the account's local mail and revokes its
-    /// token. The database and Keychain keep nothing of the account.
+    /// Signs out of the account waiting for confirmation: stops its sync, then (off the UI
+    /// thread) deletes its local mail and revokes its token. The database and Keychain keep
+    /// nothing of it. Other accounts stay signed in; signing out of the last one returns to
+    /// the sign-in screen.
     pub fn sign_out(&mut self) {
-        self.confirm_sign_out = false;
-        let Auth::SignedIn { account, session } = std::mem::replace(&mut self.auth, Auth::SignedOut { error: None })
-        else {
+        let Some(email) = self.confirm_sign_out.take() else { return };
+        let Auth::SignedIn { accounts, session } = &mut self.auth else { return };
+        let Some(i) = accounts.iter().position(|a| a.email == email) else { return };
+        let account = accounts.remove(i);
+        if accounts.is_empty() {
+            self.auth = Auth::SignedOut { error: None };
+            self.cancel_add_account();
+        } else if let Some(session) = session {
+            session.remove_account(&email);
+        }
+        if self.client.is_none() {
+            // Without a Google client (tests, snapshots) nothing was saved or signed in.
             return;
-        };
-        drop(session);
+        }
         let forget = move || {
             if let Ok(store) = Store::default_path().and_then(|path| Store::open(&path)) {
                 let _ = store.upsert_account(&account.email).and_then(|id| store.delete_account(id));
@@ -844,9 +961,10 @@ fn extend(session: &mut Session, delta: isize, tx: &mut Tx) -> bool {
 
 /// Runs `call` for each message on a few threads at once (the client paces them), returning
 /// the ones that failed and the first error.
-fn each_in_gmail(
+fn each_in_gmail<C: Sync>(
     messages: Vec<Moved>,
-    call: impl Fn(&Moved) -> Result<(), Error> + Sync,
+    clients: &HashMap<AccountId, C>,
+    call: impl Fn(&C, &Moved) -> Result<(), Error> + Sync,
 ) -> (Vec<Moved>, Option<String>) {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -856,7 +974,9 @@ fn each_in_gmail(
         for _ in 0..messages.len().min(4) {
             scope.spawn(|| {
                 while let Some(m) = messages.get(next.fetch_add(1, Ordering::Relaxed)) {
-                    if let Err(err) = call(m) {
+                    // An account signed out meanwhile has no client: its change can't be sent.
+                    let sent = clients.get(&m.account).map_or(Err(Error::SignedOut), |gmail| call(gmail, m));
+                    if let Err(err) = sent {
                         let mut failed = failed.lock().unwrap_or_else(|p| p.into_inner());
                         failed.0.push(m.clone());
                         failed.1.get_or_insert(err.to_string());
@@ -866,6 +986,27 @@ fn each_in_gmail(
         }
     });
     failed.into_inner().unwrap_or_else(|p| p.into_inner())
+}
+
+/// Starts the sync worker and Gmail client for one account. Without Google client credentials
+/// (tests, snapshots) there are neither.
+fn link(
+    client: Option<ClientCredentials>,
+    events: &Sender<Event>,
+    waker: &Option<Waker>,
+    session: u64,
+    account: &Account,
+) -> kend_store::Result<(Option<SyncWorker>, Option<Arc<Gmail>>)> {
+    let Some(client) = client else { return Ok((None, None)) };
+    let gmail = Arc::new(Gmail::new(client, account.clone()));
+    let worker = SyncWorker::start(Spec {
+        gmail: gmail.clone(),
+        db_path: Store::default_path()?,
+        session,
+        events: events.clone(),
+        waker: waker.clone(),
+    });
+    Ok((Some(worker), Some(gmail)))
 }
 
 /// A click handler that lands its change at once, as every kend action does: no layout
@@ -897,18 +1038,18 @@ mod tests {
 
     fn signed_in(app: &mut App, id: u64) {
         let session = Session::open(id, Store::open_in_memory().unwrap(), "me@example.com", None, None).unwrap();
-        app.auth = Auth::SignedIn { account: account(), session: Some(Box::new(session)) };
+        app.auth = Auth::SignedIn { accounts: vec![account()], session: Some(Box::new(session)) };
     }
 
     #[test]
     fn launch_lands_the_saved_account_or_signs_out() {
         let mut app = App::with_client(None);
         app.auth = Auth::Loading;
-        assert!(app.apply(Event::Loaded(Ok(Some(account())))));
-        assert!(matches!(&app.auth, Auth::SignedIn { account, .. } if account.email == "me@example.com"));
+        assert!(app.apply(Event::Loaded(Ok(vec![account()]))));
+        assert!(matches!(&app.auth, Auth::SignedIn { accounts, .. } if accounts[0].email == "me@example.com"));
 
         app.auth = Auth::Loading;
-        app.apply(Event::Loaded(Ok(None)));
+        app.apply(Event::Loaded(Ok(Vec::new())));
         assert!(matches!(app.auth, Auth::SignedOut { error: None }));
     }
 
@@ -947,17 +1088,17 @@ mod tests {
         };
         session.store_mut().upsert_messages(account, &[message]).unwrap();
 
-        assert!(app.apply(Event::Sync { session: 7, update: SyncUpdate::Progress(1) }));
+        assert!(app.apply(Event::Sync { session: 7, email: "me@example.com".into(), update: SyncUpdate::Progress(1) }));
         let Auth::SignedIn { session: Some(session), .. } = &app.auth else { unreachable!() };
         assert_eq!((session.rows.len(), session.unread_in("INBOX")), (1, 1));
-        assert!(matches!(session.sync, SyncStatus::Syncing { fetched: 1 }));
+        assert!(matches!(session.sync_status(), SyncStatus::Syncing { fetched: 1 }));
     }
 
     #[test]
     fn a_stopped_workers_updates_are_ignored() {
         let mut app = App::with_client(None);
         signed_in(&mut app, 7);
-        assert!(!app.apply(Event::Sync { session: 6, update: SyncUpdate::SignedOut }));
+        assert!(!app.apply(Event::Sync { session: 6, email: "me@example.com".into(), update: SyncUpdate::SignedOut }));
         assert!(matches!(app.auth, Auth::SignedIn { .. }));
     }
 
@@ -965,8 +1106,100 @@ mod tests {
     fn a_revoked_sign_in_returns_to_the_sign_in_screen() {
         let mut app = App::with_client(None);
         signed_in(&mut app, 7);
-        assert!(app.apply(Event::Sync { session: 7, update: SyncUpdate::SignedOut }));
+        assert!(app.apply(Event::Sync { session: 7, email: "me@example.com".into(), update: SyncUpdate::SignedOut }));
         assert!(matches!(&app.auth, Auth::SignedOut { error: Some(e) } if e.contains("sign in again")));
+    }
+
+    /// Signed in to me@example.com and, through Add Account, work@example.com.
+    fn two_accounts(app: &mut App) {
+        signed_in(app, 7);
+        let Auth::SignedIn { session: Some(session), .. } = &mut app.auth else { unreachable!() };
+        let me = session.account();
+        let work = session.store_mut().upsert_account("work@example.com").unwrap();
+        let message = |id: &str, at| NewMessage {
+            gmail_id: id.into(),
+            received_at: at,
+            label_ids: vec!["INBOX".into(), "UNREAD".into()],
+            ..NewMessage::default()
+        };
+        session.store_mut().upsert_messages(me, &[message("mine", 1)]).unwrap();
+        session.store_mut().upsert_messages(work, &[message("work", 2)]).unwrap();
+        app.adding = Some(Adding { attempt: 3, cancel: CancelToken::default() });
+        let added = Account::new("work@example.com".into(), "refresh".into());
+        assert!(app.apply(Event::SignInFinished { attempt: 3, result: Ok(added) }));
+        assert!(app.adding.is_none());
+    }
+
+    #[test]
+    fn an_added_account_shows_beside_the_first() {
+        let mut app = App::with_client(None);
+        two_accounts(&mut app);
+        let Auth::SignedIn { accounts, session: Some(session) } = &mut app.auth else { unreachable!() };
+        assert_eq!(accounts.len(), 2);
+        let work = session.accounts[1].id;
+        assert_eq!(session.scope, Some(work), "the new account shows first");
+        assert_eq!(visible_ids(session), ["work"]);
+        session.select_account(None);
+        assert_eq!(visible_ids(session), ["work", "mine"], "all inboxes, newest first");
+        assert_eq!(session.unread_in("INBOX"), 2);
+        assert_eq!(session.account_of("mine"), Some(session.account()));
+        assert_eq!(session.account_of("work"), Some(work));
+    }
+
+    #[test]
+    fn archiving_in_all_inboxes_changes_the_right_account() {
+        let mut app = App::with_client(None);
+        two_accounts(&mut app);
+        app.select_account(None);
+        let session = app.session_mut().unwrap();
+        let work = session.accounts[1].id;
+        session.selected = Some("work".into());
+        let moved = session.move_messages(Move::Archive);
+        assert_eq!(moved.iter().map(|m| m.account).collect::<Vec<_>>(), [work]);
+        assert_eq!(visible_ids(session), ["mine"]);
+        session.undo_move();
+        assert_eq!(visible_ids(session), ["work", "mine"]);
+    }
+
+    #[test]
+    fn signing_out_of_one_account_keeps_the_other() {
+        let mut app = App::with_client(None);
+        two_accounts(&mut app);
+        app.ask_sign_out_of("work@example.com");
+        app.sign_out();
+        let Auth::SignedIn { accounts, session: Some(session) } = &app.auth else { panic!("signed out of both") };
+        assert_eq!(accounts.iter().map(|a| a.email.as_str()).collect::<Vec<_>>(), ["me@example.com"]);
+        assert_eq!((session.scope, visible_ids(session)), (None, vec!["mine"]));
+    }
+
+    #[test]
+    fn a_revoked_second_account_leaves_the_first_signed_in() {
+        let mut app = App::with_client(None);
+        two_accounts(&mut app);
+        let revoked = Event::Sync { session: 7, email: "work@example.com".into(), update: SyncUpdate::SignedOut };
+        assert!(app.apply(revoked));
+        let Auth::SignedIn { accounts, session: Some(session) } = &app.auth else { panic!("signed out") };
+        assert_eq!(accounts.len(), 1);
+        assert!(session.shown_error().is_some_and(|e| e.contains("work@example.com")));
+    }
+
+    #[test]
+    fn a_new_message_goes_from_the_account_shown_and_a_reply_from_the_originals() {
+        let mut app = App::with_client(None);
+        two_accounts(&mut app);
+        let (me, work) = {
+            let s = app.session().unwrap();
+            (s.accounts[0].id, s.accounts[1].id)
+        };
+        app.compose_new();
+        assert_eq!(app.session().unwrap().compose.as_ref().unwrap().account, Some(work));
+        app.next_from_account();
+        assert_eq!(app.session().unwrap().compose.as_ref().unwrap().account, Some(me));
+        app.discard_compose();
+        app.select_account(None);
+        app.open_message("work");
+        app.reply(false);
+        assert_eq!(app.session().unwrap().compose.as_ref().unwrap().account, Some(work));
     }
 
     fn many(count: usize) -> Vec<NewMessage> {
@@ -1033,7 +1266,7 @@ mod tests {
         messages[1].body_text = Some("already here".into());
         store.upsert_messages(id, &messages).unwrap();
         let session = Session::open(1, store, "me@example.com", None, None).unwrap();
-        app.auth = Auth::SignedIn { account: account(), session: Some(Box::new(session)) };
+        app.auth = Auth::SignedIn { accounts: vec![account()], session: Some(Box::new(session)) };
     }
 
     fn reading(app: &App) -> Option<&str> {
@@ -1060,7 +1293,7 @@ mod tests {
         let mut session = session_with(3);
         session.open_message("m0002");
         let body = kend_gmail::MessageBody { text: "hello".into(), html: None };
-        session.body_loaded("m0002", Ok(Some(body)));
+        session.body_loaded(session.account(), "m0002", Ok(Some(body)));
         let reading = session.reading.as_ref().unwrap();
         assert!(matches!(reading.body, crate::session::BodyState::Ready));
         assert_eq!(reading.message.body_text.as_deref(), Some("hello"));
@@ -1074,7 +1307,8 @@ mod tests {
         let mut session = session_with(3);
         session.open_message("m0000");
         session.open_message("m0001");
-        session.body_loaded("m0000", Ok(Some(kend_gmail::MessageBody { text: "late".into(), html: None })));
+        let body = kend_gmail::MessageBody { text: "late".into(), html: None };
+        session.body_loaded(session.account(), "m0000", Ok(Some(body)));
         assert_eq!(session.reading.as_ref().unwrap().message.summary.gmail_id, "m0001");
         assert!(!session.open_message("m0000").fetch_body);
     }
@@ -1085,7 +1319,7 @@ mod tests {
         let account = session.account();
         session.store_mut().set_unread(account, "m0000", true).unwrap();
         session.open_message("m0000");
-        session.mark_read_failed("m0000", "offline".into());
+        session.mark_read_failed(account, "m0000", "offline".into());
         session.reload();
         assert!(session.rows[0].unread);
         assert!(session.error.as_deref().is_some_and(|e| e.contains("offline")));
@@ -1367,7 +1601,7 @@ mod tests {
         ];
         store.upsert_messages(id, &messages).unwrap();
         let session = Session::open(1, store, "me@example.com", None, None).unwrap();
-        app.auth = Auth::SignedIn { account: account(), session: Some(Box::new(session)) };
+        app.auth = Auth::SignedIn { accounts: vec![account()], session: Some(Box::new(session)) };
 
         press(&mut app, Key::Text("j".into()));
         press(&mut app, Key::Text("F".into()));
@@ -1413,14 +1647,19 @@ mod tests {
 
     #[test]
     fn bulk_gmail_calls_report_only_the_failures() {
-        let messages: Vec<Moved> =
-            (0..10).map(|i| Moved { gmail_id: format!("m{i}"), previous: vec!["INBOX".into()] }).collect();
-        let (failed, error) = each_in_gmail(messages, |m| {
+        let store = Store::open_in_memory().unwrap();
+        let (a, gone) = (store.upsert_account("a@x.com").unwrap(), store.upsert_account("gone@x.com").unwrap());
+        let moved = |i: usize, account| Moved { account, gmail_id: format!("m{i}"), previous: vec!["INBOX".into()] };
+        let mut messages: Vec<Moved> = (0..10).map(|i| moved(i, a)).collect();
+        messages.push(moved(10, gone));
+        let clients = HashMap::from([(a, "client for a")]);
+        let (failed, error) = each_in_gmail(messages, &clients, |client, m| {
+            assert_eq!(*client, "client for a", "each message goes to its own account");
             if m.gmail_id == "m3" || m.gmail_id == "m7" { Err(Error::TimedOut) } else { Ok(()) }
         });
         let mut failed = ids(&failed);
         failed.sort();
-        assert_eq!(failed, ["m3", "m7"]);
+        assert_eq!(failed, ["m10", "m3", "m7"], "an account with no client fails too");
         assert!(error.is_some());
     }
 }
